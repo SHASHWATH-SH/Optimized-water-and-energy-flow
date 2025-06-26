@@ -32,13 +32,174 @@ function createLabel(text, position, scene) {
 }
 
 function createCity(scene, state, objects, labels, buildingPositions) {
-  // Ground
+  // --- Helper functions for realistic objects ---
+  function addTree(x, z, trunkHeight = 15, foliageRadius = 7) {
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.7, 1.2, trunkHeight, 10),
+      new THREE.MeshStandardMaterial({ color: 0x8d5524 })
+    );
+    const foliage = new THREE.Mesh(
+      new THREE.SphereGeometry(foliageRadius, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0x2e8b57 })
+    );
+    trunk.position.set(x, trunkHeight / 2, z);
+    foliage.position.set(x, trunkHeight + foliageRadius - 2, z);
+    scene.add(trunk);
+    scene.add(foliage);
+  }
+  function addBench(x, z) {
+    const bench = new THREE.Mesh(
+      new THREE.BoxGeometry(4, 0.5, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.8 })
+    );
+    bench.position.set(x, 1, z);
+    scene.add(bench);
+  }
+  function addWell(x, z) {
+    const well = new THREE.Mesh(
+      new THREE.CylinderGeometry(2, 2, 5, 24),
+      new THREE.MeshStandardMaterial({ color: 0x8888ff })
+    );
+    well.position.set(x, 2.5, z);
+    scene.add(well);
+    createLabel('Well', well.position, scene);
+  }
+  function addPipe(start, end, color) {
+    const pipe = createCylinder(start, end, 1.2, color);
+    pipe.material.transparent = true;
+    pipe.material.opacity = 0.5;
+    scene.add(pipe);
+    return pipe;
+  }
+
+  // --- Larger ground ---
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(120, 120),
+    new THREE.PlaneGeometry(480, 480),
     new THREE.MeshPhongMaterial({ color: 0x88cc88 })
   );
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
+
+  // --- Fewer roads ---
+  // Main horizontal and vertical roads
+  const mainRoad = new THREE.Mesh(
+    new THREE.BoxGeometry(480, 0.3, 12),
+    new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.7 })
+  );
+  mainRoad.position.set(0, 0.16, 0);
+  scene.add(mainRoad);
+  const vertRoad = new THREE.Mesh(
+    new THREE.BoxGeometry(12, 0.3, 480),
+    new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.7 })
+  );
+  vertRoad.position.set(0, 0.16, 0);
+  scene.add(vertRoad);
+  // One cross street in each direction
+  for (let i of [-60, 60]) {
+    const crossH = new THREE.Mesh(
+      new THREE.BoxGeometry(480, 0.2, 8),
+      new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 })
+    );
+    crossH.position.set(0, 0.13, i);
+    scene.add(crossH);
+    const crossV = new THREE.Mesh(
+      new THREE.BoxGeometry(8, 0.2, 480),
+      new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 })
+    );
+    crossV.position.set(i, 0.13, 0);
+    scene.add(crossV);
+  }
+  // Streetlights only along main roads
+  for (let i = -220; i <= 220; i += 40) {
+    // Along horizontal main road
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 5, 8),
+      new THREE.MeshStandardMaterial({ color: 0xcccccc })
+    );
+    const lamp = new THREE.Mesh(
+      new THREE.SphereGeometry(0.5, 10, 10),
+      new THREE.MeshStandardMaterial({ color: 0xffffcc, emissive: 0xffff99, emissiveIntensity: 0.8 })
+    );
+    pole.position.set(i, 2.5, 6);
+    lamp.position.set(i, 5.5, 6);
+    scene.add(pole);
+    scene.add(lamp);
+    // Along vertical main road
+    const pole2 = pole.clone();
+    const lamp2 = lamp.clone();
+    pole2.position.set(6, 2.5, i);
+    lamp2.position.set(6, 5.5, i);
+    scene.add(pole2);
+    scene.add(lamp2);
+  }
+
+  // --- More buildings, filling the area, larger and more realistic ---
+  const buildingColors = [0x8ecae6, 0xffb703, 0x219ebc, 0x023047, 0xf4a261, 0xe76f51, 0x264653, 0x2a9d8f, 0x457b9d, 0xa8dadc];
+  let buildingIdx = 0;
+  const blockSize = 44;
+  const margin = 6;
+  const buildingBase = 8;
+  const buildingHeightMin = 20;
+  const buildingHeightMax = 40;
+  const buildingCenters = [];
+  for (let row = -5; row <= 4; row++) {
+    for (let col = -5; col <= 4; col++) {
+      // Skip main roads and cross streets
+      if (row === 0 || col === 0 || row === -2 || row === 2 || col === -2 || col === 2) continue;
+      const height = Math.random() * (buildingHeightMax - buildingHeightMin) + buildingHeightMin;
+      const color = buildingColors[buildingIdx % buildingColors.length];
+      const roofColors = [0x222222, 0x6d6875, 0x8d99ae, 0x495057];
+      const roofColor = roofColors[Math.floor(Math.random() * roofColors.length)];
+      // Center of block, with margin and small jitter
+      const x = col * blockSize + (Math.random() - 0.5) * 6;
+      const z = row * blockSize + (Math.random() - 0.5) * 6;
+      const rotY = (Math.random() - 0.5) * 0.1;
+      // Main building body
+      const building = new THREE.Mesh(
+        new THREE.BoxGeometry(buildingBase, height, buildingBase),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 })
+      );
+      const pos = new THREE.Vector3(x, height / 2, z);
+      building.position.copy(pos);
+      building.rotation.y = rotY;
+      scene.add(building);
+      // Roof
+      const roof = new THREE.Mesh(
+        new THREE.BoxGeometry(buildingBase + 0.5, 1, buildingBase + 0.5),
+        new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.3, metalness: 0.7 })
+      );
+      roof.position.set(pos.x, pos.y + height / 2 + 0.5, pos.z);
+      roof.rotation.y = rotY;
+      scene.add(roof);
+      // Doorway (proportional)
+      const door = new THREE.Mesh(
+        new THREE.BoxGeometry(1.5, 3, 0.3),
+        new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 0.7 })
+      );
+      door.position.set(pos.x, pos.y - height / 2 + 1.5, pos.z + buildingBase / 2 + 0.15);
+      door.rotation.y = rotY;
+      scene.add(door);
+      // Windows (proportional, variety)
+      for (let y = 0; y < Math.floor(height / 6); y++) {
+        for (let wx = -1; wx <= 1; wx++) {
+          if (Math.random() > 0.5) {
+            const windowMesh = new THREE.Mesh(
+              new THREE.BoxGeometry(1.2, 1.2, 0.2),
+              new THREE.MeshStandardMaterial({ color: 0xcce3f7, emissive: 0x99ccff, emissiveIntensity: 0.3 })
+            );
+            windowMesh.position.set(pos.x + wx * 2, pos.y - height / 2 + 2.5 + y * 6, pos.z + buildingBase / 2 + 0.25);
+            windowMesh.rotation.y = rotY;
+            scene.add(windowMesh);
+          }
+        }
+      }
+      createLabel('Building ' + (buildingIdx + 1), building.position, scene);
+      objects.push({ mesh: building, type: 'building', status: state.energyDisrupted || state.waterDisrupted ? 'Disrupted' : 'OK' });
+      buildingPositions.push(pos.clone());
+      buildingCenters.push(pos.clone());
+      buildingIdx++;
+    }
+  }
 
   // River (Cauvery) with animated texture
   const riverTexture = new THREE.TextureLoader().load('https://threejs.org/examples/textures/water.jpg');
@@ -53,21 +214,10 @@ function createCity(scene, state, objects, labels, buildingPositions) {
   createLabel('Cauvery River', river.position, scene);
 
   // Trees
-  for (let i = 0; i < 15; i++) {
-    const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.3, 0.4, 2, 8),
-      new THREE.MeshStandardMaterial({ color: 0x8d5524 })
-    );
-    const foliage = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0x2e8b57 })
-    );
-    const x = Math.random() * 100 - 50;
-    const z = Math.random() * 100 - 50;
-    trunk.position.set(x, 1, z);
-    foliage.position.set(x, 3, z);
-    scene.add(trunk);
-    scene.add(foliage);
+  for (let i = 0; i < 10; i++) {
+    const x = (Math.random() - 0.5) * 400;
+    const z = (Math.random() - 0.5) * 400;
+    addTree(x, z);
   }
 
   // Streetlights
@@ -88,15 +238,22 @@ function createCity(scene, state, objects, labels, buildingPositions) {
     scene.add(lamp);
   }
 
-  // Powerhouse
-  const powerhouse = new THREE.Mesh(
-    new THREE.BoxGeometry(8, 8, 8),
-    new THREE.MeshPhongMaterial({ color: 0x555555 })
-  );
-  powerhouse.position.set(-40, 4, 40);
-  scene.add(powerhouse);
-  createLabel('Powerhouse', powerhouse.position, scene);
-  objects.push({ mesh: powerhouse, type: 'powerhouse', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
+  // --- Multiple powerhouses at city edges/corners ---
+  const powerhousePositions = [
+    new THREE.Vector3(-220, 4, -220),
+    new THREE.Vector3(-220, 4, 220),
+    new THREE.Vector3(220, 4, -220),
+    new THREE.Vector3(220, 4, 220)
+  ];
+  powerhousePositions.forEach((pos, i) => {
+    const ph = new THREE.Mesh(
+      new THREE.BoxGeometry(18, 18, 18),
+      new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.7, roughness: 0.3 })
+    );
+    ph.position.copy(pos);
+    scene.add(ph);
+    createLabel(`Powerhouse ${i + 1}`, ph.position.clone().add(new THREE.Vector3(0, 14, 0)), scene);
+  });
 
   // Solar panels
   for (let i = 0; i < 5; i++) {
@@ -111,81 +268,129 @@ function createCity(scene, state, objects, labels, buildingPositions) {
     objects.push({ mesh: panel, type: 'solar', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
   }
 
-  // Groundwater wells
-  for (let i = 0; i < 3; i++) {
+  // --- Groundwater wells and pumps ---
+  const wellStatuses = ['OK', 'Dry', 'Contaminated'];
+  const pumpStatuses = ['OK', 'Failed'];
+  const wellColors = { OK: 0x1e90ff, Dry: 0xaaaaaa, Contaminated: 0xff3333 };
+  const pumpColors = { OK: 0x228B22, Failed: 0xffa500 };
+  // Place 8 wells at various locations
+  const wellPositions = [
+    new THREE.Vector3(-120, 2, -80),
+    new THREE.Vector3(80, 2, -100),
+    new THREE.Vector3(-60, 2, 120),
+    new THREE.Vector3(120, 2, 60),
+    new THREE.Vector3(-150, 2, 150),
+    new THREE.Vector3(150, 2, -150),
+    new THREE.Vector3(0, 2, 180),
+    new THREE.Vector3(-180, 2, 0)
+  ];
+  wellPositions.forEach((pos, i) => {
+    // Randomly assign status
+    const wellStatus = wellStatuses[Math.floor(Math.random() * wellStatuses.length)];
+    const pumpStatus = pumpStatuses[Math.floor(Math.random() * pumpStatuses.length)];
+    // Well
     const well = new THREE.Mesh(
-      new THREE.CylinderGeometry(1, 1, 4, 16),
-      new THREE.MeshPhongMaterial({ color: 0x8888ff })
+      new THREE.CylinderGeometry(4, 4, 10, 24),
+      new THREE.MeshStandardMaterial({ color: wellColors[wellStatus], metalness: 0.3, roughness: 0.7 })
     );
-    well.position.set(-20 + i * 20, 2, -10);
+    well.position.copy(pos);
     scene.add(well);
-    createLabel('Well', well.position, scene);
-    objects.push({ mesh: well, type: 'well', status: state.waterDisrupted ? 'Disrupted' : 'OK' });
-  }
-
-  // Buildings
-  const buildingColors = [0x8ecae6, 0xffb703, 0x219ebc, 0x023047, 0xf4a261, 0xe76f51, 0x264653, 0x2a9d8f, 0x457b9d, 0xa8dadc];
-  for (let i = 0; i < 10; i++) {
-    const height = Math.random() * 10 + 8;
-    const color = buildingColors[i % buildingColors.length];
-    // Main building body
-    const building = new THREE.Mesh(
-      new THREE.BoxGeometry(4, height, 4),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 })
+    createLabel(`Well (${wellStatus})`, well.position.clone().add(new THREE.Vector3(0, 8, 0)), scene);
+    // Pump (as a box next to well)
+    const pump = new THREE.Mesh(
+      new THREE.BoxGeometry(6, 6, 6),
+      new THREE.MeshStandardMaterial({ color: pumpColors[pumpStatus], metalness: 0.4, roughness: 0.6 })
     );
-    const pos = new THREE.Vector3(Math.random() * 80 - 40, height / 2, Math.random() * 60 - 10);
-    building.position.copy(pos);
-    scene.add(building);
-    // Roof
-    const roof = new THREE.Mesh(
-      new THREE.BoxGeometry(4.2, 1, 4.2),
-      new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.7 })
-    );
-    roof.position.set(pos.x, pos.y + height / 2 + 0.5, pos.z);
-    scene.add(roof);
-    // Windows (simple pattern)
-    for (let y = 0; y < Math.floor(height / 2); y++) {
-      for (let x = -1; x <= 1; x++) {
-        const windowMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(0.6, 0.6, 0.1),
-          new THREE.MeshStandardMaterial({ color: 0xcce3f7, emissive: 0x99ccff, emissiveIntensity: 0.3 })
-        );
-        windowMesh.position.set(pos.x + x * 1.2, pos.y - height / 2 + 1.5 + y * 2, pos.z + 2.05);
-        scene.add(windowMesh);
-      }
-    }
-    createLabel('Building ' + (i + 1), building.position, scene);
-    objects.push({ mesh: building, type: 'building', status: state.energyDisrupted || state.waterDisrupted ? 'Disrupted' : 'OK' });
-    buildingPositions.push(pos.clone());
-  }
+    pump.position.copy(pos).add(new THREE.Vector3(8, 3, 0));
+    scene.add(pump);
+    createLabel(`Pump (${pumpStatus})`, pump.position.clone().add(new THREE.Vector3(0, 6, 0)), scene);
+  });
 
-  // Garden
+  // --- New garden outside the city ---
+  // Large grass patch for garden
+  const gardenPos = new THREE.Vector3(70, 0.5, -70);
+  const gardenGrass = new THREE.Mesh(
+    new THREE.CylinderGeometry(18, 18, 0.5, 40),
+    new THREE.MeshStandardMaterial({ color: 0x7ec850, roughness: 0.8 })
+  );
+  gardenGrass.position.copy(gardenPos.clone().setY(0.25));
+  scene.add(gardenGrass);
+  // Walking path (ellipse)
+  const gardenPath = new THREE.Mesh(
+    new THREE.TorusGeometry(13, 0.5, 16, 60),
+    new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.9 })
+  );
+  gardenPath.position.copy(gardenPos.clone().setY(1.1));
+  gardenPath.rotation.x = Math.PI / 2;
+  scene.add(gardenPath);
+  // Garden mesh
   const garden = new THREE.Mesh(
     new THREE.BoxGeometry(10, 1, 10),
     new THREE.MeshPhongMaterial({ color: 0x228822 })
   );
-  garden.position.set(30, 0.5, 30);
+  garden.position.copy(gardenPos);
   scene.add(garden);
   createLabel('Garden', garden.position, scene);
   objects.push({ mesh: garden, type: 'garden', status: 'OK' });
+  // Trees near garden
+  for (let i = 0; i < 7; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 10 + Math.random() * 6;
+    const x = gardenPos.x + Math.cos(angle) * radius;
+    const z = gardenPos.z + Math.sin(angle) * radius;
+    addTree(x, z);
+  }
+  // Benches near garden
+  for (let i = 0; i < 3; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 14;
+    const x = gardenPos.x + Math.cos(angle) * radius;
+    const z = gardenPos.z + Math.sin(angle) * radius;
+    const bench = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 0.3, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.8 })
+    );
+    bench.position.set(x, 1, z);
+    scene.add(bench);
+  }
+  // --- End new garden area ---
+  // Extend ground area if needed
+  scene.children.forEach(obj => {
+    if (obj.geometry && obj.geometry.type === 'PlaneGeometry') {
+      obj.scale.set(2, 2, 2); // double the ground size
+    }
+  });
+
+  // Separate garden with its own supply (far from buildings)
+  const garden2 = new THREE.Mesh(
+    new THREE.BoxGeometry(12, 1, 12),
+    new THREE.MeshPhongMaterial({ color: 0x43aa8b })
+  );
+  garden2.position.set(-60, 0.5, 60);
+  scene.add(garden2);
+  createLabel('Garden 2', garden2.position, scene);
+  objects.push({ mesh: garden2, type: 'garden', status: 'OK' });
+
+  // Water supply to garden2: from nearest well
+  const wellPos = new THREE.Vector3(-20, 2, -10);
+  const pipeToGarden2 = addPipe(wellPos, new THREE.Vector3(-60, 0.5, 60), state.waterDisrupted ? 0xff6600 : 0x3399ff);
+  objects.push({ mesh: pipeToGarden2, type: 'pipe', status: state.waterDisrupted ? 'Disrupted' : 'OK' });
+
+  // Power supply to garden2: from powerhouse
+  const powerLineToGarden2 = addPipe(new THREE.Vector3(-40, 8, 40), new THREE.Vector3(-60, 2, 60), state.energyDisrupted ? 0xff0000 : 0xffff00);
+  objects.push({ mesh: powerLineToGarden2, type: 'powerline', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
 
   // Pipes: river to wells, wells to garden (semi-transparent)
   for (let i = 0; i < 3; i++) {
     const start = new THREE.Vector3(-20 + i * 20, 2, -10);
     const end = new THREE.Vector3(30, 0.5, 30);
-    const pipe = createCylinder(start, end, 0.5, state.waterDisrupted ? 0xff6600 : 0x3399ff);
-    pipe.material.transparent = true;
-    pipe.material.opacity = 0.5;
-    scene.add(pipe);
+    const pipe = addPipe(start, end, state.waterDisrupted ? 0xff6600 : 0x3399ff);
     objects.push({ mesh: pipe, type: 'pipe', status: state.waterDisrupted ? 'Disrupted' : 'OK' });
   }
   for (let i = 0; i < 3; i++) {
     const start = new THREE.Vector3(0, 0.5, -40);
     const end = new THREE.Vector3(-20 + i * 20, 2, -10);
-    const pipe = createCylinder(start, end, 0.5, state.waterDisrupted ? 0xff6600 : 0x3399ff);
-    pipe.material.transparent = true;
-    pipe.material.opacity = 0.5;
-    scene.add(pipe);
+    const pipe = addPipe(start, end, state.waterDisrupted ? 0xff6600 : 0x3399ff);
     objects.push({ mesh: pipe, type: 'pipe', status: state.waterDisrupted ? 'Disrupted' : 'OK' });
   }
 
@@ -193,14 +398,117 @@ function createCity(scene, state, objects, labels, buildingPositions) {
   for (let i = 0; i < buildingPositions.length; i++) {
     const buildingPos = buildingPositions[i].clone().add(new THREE.Vector3(0, 5, 0));
     // powerhouse
-    const powerLine1 = createCylinder(new THREE.Vector3(-40, 8, 40), buildingPos, 0.2, state.energyDisrupted ? 0xff0000 : 0xffff00);
-    scene.add(powerLine1);
+    const powerLine1 = addPipe(new THREE.Vector3(-40, 8, 40), buildingPos, state.energyDisrupted ? 0xff0000 : 0xffff00);
     objects.push({ mesh: powerLine1, type: 'powerline', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
     // solar
-    const powerLine2 = createCylinder(new THREE.Vector3(-30 + (i % 5) * 6, 0.5, 35), buildingPos, 0.1, state.energyDisrupted ? 0xff0000 : 0x00ff00);
-    scene.add(powerLine2);
+    const powerLine2 = addPipe(new THREE.Vector3(-30 + (i % 5) * 6, 0.5, 35), buildingPos, state.energyDisrupted ? 0xff0000 : 0x00ff00);
     objects.push({ mesh: powerLine2, type: 'powerline', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
   }
+
+  // Park
+  function createPark() {
+    // Park base
+    const park = new THREE.Mesh(
+      new THREE.BoxGeometry(24, 1, 24),
+      new THREE.MeshStandardMaterial({ color: 0x7ec850, roughness: 0.7 })
+    );
+    park.position.set(-70, 0.5, 70);
+    scene.add(park);
+    // Park label
+    createLabel('Park', park.position.clone().add(new THREE.Vector3(0, 2, 0)), scene);
+    // Walking path (rectangle)
+    const pathMaterial = new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.9 });
+    const path1 = new THREE.Mesh(new THREE.BoxGeometry(20, 0.2, 2), pathMaterial);
+    path1.position.set(-70, 1.1, 82);
+    scene.add(path1);
+    const path2 = new THREE.Mesh(new THREE.BoxGeometry(20, 0.2, 2), pathMaterial);
+    path2.position.set(-70, 1.1, 58);
+    scene.add(path2);
+    const path3 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 24), pathMaterial);
+    path3.position.set(-82, 1.1, 70);
+    scene.add(path3);
+    const path4 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 24), pathMaterial);
+    path4.position.set(-58, 1.1, 70);
+    scene.add(path4);
+    // More trees around park
+    for (let i = 0; i < 14; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 13 + Math.random() * 5;
+      const x = -70 + Math.cos(angle) * radius;
+      const z = 70 + Math.sin(angle) * radius;
+      addTree(x, z);
+    }
+    // Grass patches
+    for (let i = 0; i < 8; i++) {
+      const patch = new THREE.Mesh(
+        new THREE.CircleGeometry(2 + Math.random() * 2, 16),
+        new THREE.MeshStandardMaterial({ color: 0x6bbf59, roughness: 0.8 })
+      );
+      patch.position.set(-70 + Math.random() * 18 - 9, 1.01, 70 + Math.random() * 18 - 9);
+      patch.rotation.x = -Math.PI / 2;
+      scene.add(patch);
+    }
+    // Benches
+    for (let i = 0; i < 4; i++) {
+      addBench(-75 + i * 5, 75);
+    }
+    // Pond (animated water)
+    const pondTexture = new THREE.TextureLoader().load('https://threejs.org/examples/textures/water.jpg');
+    pondTexture.wrapS = pondTexture.wrapT = THREE.RepeatWrapping;
+    const pond = new THREE.Mesh(
+      new THREE.CylinderGeometry(4, 4, 0.5, 32),
+      new THREE.MeshStandardMaterial({ color: 0x4fc3f7, map: pondTexture, transparent: true, opacity: 0.8, roughness: 0.3, metalness: 0.5 })
+    );
+    pond.position.set(-70, 1, 65);
+    scene.add(pond);
+    // Water supply to park: from nearest well
+    const wellPos = new THREE.Vector3(-20, 2, -10);
+    const pipeToPark = addPipe(wellPos, new THREE.Vector3(-70, 1, 70), state.waterDisrupted ? 0xff6600 : 0x3399ff);
+    objects.push({ mesh: pipeToPark, type: 'pipe', status: state.waterDisrupted ? 'Disrupted' : 'OK' });
+    // Power supply to park: from powerhouse
+    const powerLineToPark = addPipe(new THREE.Vector3(-40, 8, 40), new THREE.Vector3(-70, 2, 70), state.energyDisrupted ? 0xff0000 : 0xffff00);
+    objects.push({ mesh: powerLineToPark, type: 'powerline', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
+  }
+  createPark();
+
+  // --- Power grid with transformers and clusters (clean version) ---
+  const transformerPositions = [
+    new THREE.Vector3(-200, 4, -200),
+    new THREE.Vector3(-200, 4, 200),
+    new THREE.Vector3(200, 4, -200),
+    new THREE.Vector3(200, 4, 200)
+  ];
+  for (let i = 0; i < transformerPositions.length; i++) {
+    const t = new THREE.Mesh(
+      new THREE.CylinderGeometry(4, 4, 10, 16),
+      new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.7, roughness: 0.3 })
+    );
+    t.position.copy(transformerPositions[i]);
+    scene.add(t);
+    createLabel('Transformer', t.position, scene);
+  }
+  // Power lines: each transformer → nearest powerhouse
+  transformerPositions.forEach((tpos) => {
+    let minDist = Infinity;
+    let nearestPH = powerhousePositions[0];
+    for (let ph of powerhousePositions) {
+      const dist = tpos.distanceTo(ph);
+      if (dist < minDist) {
+        minDist = dist;
+        nearestPH = ph;
+      }
+    }
+    const powerLine = addPipe(nearestPH, tpos, state.energyDisrupted ? 0xff0000 : 0xffff00);
+    objects.push({ mesh: powerLine, type: 'powerline', status: state.energyDisrupted ? 'Disrupted' : 'OK' });
+  });
+
+  // --- Huge water source: River ---
+  const mainRiverGeometry = new THREE.BoxGeometry(60, 2, 400);
+  const mainRiverMaterial = new THREE.MeshPhongMaterial({ color: 0x3399ff, transparent: true, opacity: 0.7 });
+  const mainRiver = new THREE.Mesh(mainRiverGeometry, mainRiverMaterial);
+  mainRiver.position.set(-250, 1, 0); // Place river to the side of the city
+  scene.add(mainRiver);
+  createLabel('River', mainRiver.position.clone().add(new THREE.Vector3(0, 8, 0)), scene);
 }
 
 function animateFlows(scene, state, flowObjs, tick, buildingPositions) {
@@ -299,11 +607,12 @@ function App() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xaadfff);
 
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 60, 100);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 200, 400);
     camera.lookAt(0, 0, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     mountRef.current.appendChild(renderer.domElement);
@@ -313,7 +622,7 @@ function App() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.minDistance = 30;
-    controls.maxDistance = 200;
+    controls.maxDistance = 2000;
     controls.maxPolarAngle = Math.PI / 2.1;
 
     // Lighting
