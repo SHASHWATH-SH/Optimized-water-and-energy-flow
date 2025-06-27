@@ -22,21 +22,34 @@ function createCylinder(start, end, radius, color, opacity = 1, metalness = 0.5,
 }
 
 function createLabel(text, position, scene) {
-  // Modern floating label using Sprite
+  // Modern floating label using Sprite - much larger and more visible
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
+  canvas.width = 600; // Much larger canvas
+  canvas.height = 150; // Much larger canvas
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillRect(0, 0, 256, 64);
-  ctx.font = 'bold 28px Segoe UI, Arial';
-  ctx.fillStyle = '#222';
+  
+  // Add dark border for better visibility
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, 0, 600, 150);
+  
+  // Main background
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillRect(4, 4, 592, 142);
+  
+  // Add border
+  ctx.strokeStyle = '#2563eb';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(4, 4, 592, 142);
+  
+  ctx.font = 'bold 48px Segoe UI, Arial'; // Much larger font
+  ctx.fillStyle = '#2563eb'; // Blue text for better visibility
   ctx.textAlign = 'center';
-  ctx.fillText(text, 128, 44);
+  ctx.fillText(text, 300, 95); // Adjusted position for larger canvas
+  
   const texture = new THREE.CanvasTexture(canvas);
   const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
   const sprite = new THREE.Sprite(spriteMaterial);
-  sprite.scale.set(32, 8, 1);
+  sprite.scale.set(80, 20, 1); // Much larger scale
   sprite.position.copy(position.clone().add(new THREE.Vector3(0, 20, 0)));
   scene.add(sprite);
 }
@@ -56,6 +69,8 @@ function SimulationPage() {
   const pipesRef = useRef([]); // Store pipe data for simulation
   const dropletsRef = useRef([]); // Store droplet meshes
   const buildingPipeIndices = useRef([]); // Store building pipe indices
+  const [riverWaterAmount, setRiverWaterAmount] = useState(1000);
+  const [groundWaterAmount, setGroundWaterAmount] = useState(1000);
 
   // Instanced mesh references
   let dropletInstancedMesh = null;
@@ -205,7 +220,10 @@ function SimulationPage() {
     river.position.set(0, 1, 0);
     river.rotation.x = -Math.PI / 2;
     scene.add(river);
-    createLabel('Cauvery River', new THREE.Vector3(-500 * scaleUp * riverScale, 6, 0), scene);
+    // Place and label the Kaveri River
+    const riverLabelPos = new THREE.Vector3(-500 * scaleUp * riverScale, 40, 0);
+    createLabel('Kaveri River', new THREE.Vector3(river.position.x, river.position.y + 12, river.position.z), scene);
+
     // River walkway
     const walkway = new THREE.Mesh(
       new THREE.BoxGeometry(200 * scaleUp, 1 * scaleUp, 28 * scaleUp),
@@ -284,6 +302,10 @@ function SimulationPage() {
     // Buildings (12x12 grid, skip park area, realistic details)
     const buildingPositions = [];
     const buildingColors = [0xf5f5f5, 0xe0c097, 0xb0b0b0, 0x8d99ae, 0x6d6875, 0x457b9d, 0xa8dadc, 0xf4a261, 0xe76f51, 0x264653];
+    // Water source tracking variables
+    let riverBuildings = 0;
+    let groundBuildings = 0;
+    const buildingWaterSources = []; // Array to store water source for each building
     for (let row = 0; row < gridRows; row++) {
       for (let col = 0; col < gridCols; col++) {
         const pos = new THREE.Vector3(startX + col * spacing, 12, startZ + row * spacing);
@@ -292,6 +314,21 @@ function SimulationPage() {
           pos.x > parkMinX && pos.x < parkMaxX &&
           pos.z > parkMinZ && pos.z < parkMaxZ
         ) continue;
+        
+        // Determine water source based on building position
+        // Buildings closer to the river (left side) use river water
+        // Buildings further from the river (right side) use groundwater
+        const riverThreshold = startX + (gridCols / 2) * spacing; // Middle of the grid
+        const usesRiver = pos.x < riverThreshold;
+        
+        if (usesRiver) {
+          riverBuildings++;
+          buildingWaterSources.push('river');
+        } else {
+          groundBuildings++;
+          buildingWaterSources.push('ground');
+        }
+        
         buildingPositions.push(pos);
         // --- Realistic Building ---
         // Vary shape and roof style
@@ -437,9 +474,38 @@ function SimulationPage() {
           roof.position.copy(pos).setY(height + 4 * scaleUp * buildingScale);
           scene.add(roof);
         }
-        createLabel(`Building (${row + 1},${col + 1})`, bldg.position, scene);
+        // For each building:
+        let source, label, waterSupplied;
+        if (usesRiver) {
+          source = 'Kaveri River';
+          waterSupplied = riverBuildings > 0 ? (riverWaterAmount / riverBuildings).toFixed(1) : 0;
+        } else {
+          source = 'Groundwater';
+          waterSupplied = groundBuildings > 0 ? (groundWaterAmount / groundBuildings).toFixed(1) : 0;
+        }
+        // Position label above the building (above the actual building height)
+        const labelPosition = pos.clone().setY(height + 20 * scaleUp * buildingScale);
+        createLabel(`${waterSupplied} units from ${source}`, labelPosition, scene);
       }
     }
+    
+    // Connect buildings to water sources
+    buildingPositions.forEach((buildingPos, index) => {
+      const waterSource = buildingWaterSources[index];
+      let sourcePos;
+      
+      if (waterSource === 'river') {
+        // Connect to Kaveri River (left side)
+        sourcePos = new THREE.Vector3(-480 * scaleUp, 2, buildingPos.z);
+      } else {
+        // Connect to Groundwater Source (aquifer)
+        sourcePos = new THREE.Vector3(600 * scaleUp, 2, -600 * scaleUp);
+      }
+      
+      // Connect building to water source
+      addWaterPipe(sourcePos, buildingPos, waterSource, 'building');
+    });
+    
     // Park path
     const path = new THREE.Mesh(
       new THREE.TorusGeometry(36 * scaleUp, 2.4 * scaleUp, 16, 40),
@@ -548,28 +614,16 @@ function SimulationPage() {
       scene.add(pipe);
       pipesRef.current.push({ from: from.clone(), to: to.clone(), pipe, sourceType, type });
     }
-    // Assign water source to each building and connect with pipes
-    for (let i = 0; i < buildingPositions.length; i++) {
-      const pos = buildingPositions[i];
-      const col = Math.round((pos.x - startX) / spacing);
-      let source, label, sourceType;
-      if (col <= 1) {
-        source = new THREE.Vector3(-500 * scaleUp * riverScale, 2, 0);
-        label = 'From Cauvery';
-        sourceType = 'river';
-      } else {
-        source = getQuadrantWell(pos);
-        label = 'From Well';
-        sourceType = 'well';
-      }
-      addWaterPipe(source, pos, sourceType, 'building');
-      buildingPipeIndices.current.push(pipesRef.current.length - 1);
-      createLabel(`Building (${label})`, pos, scene);
-    }
-    // Connect park to center well only
-    const parkSource = wellPositions[4];
-    addWaterPipe(parkSource, parkCenter, 'well', 'park');
-    createLabel('Central Park (From Well)', parkCenter, scene);
+    // Place and label the Groundwater Source (aquifer)
+    const aquiferPos = new THREE.Vector3(600 * scaleUp, 2, -600 * scaleUp);
+    const aquifer = new THREE.Mesh(
+      new THREE.CylinderGeometry(32 * scaleUp, 32 * scaleUp, 10 * scaleUp, 32),
+      new THREE.MeshPhysicalMaterial({ color: 0x4fc3f7, roughness: 0.3, metalness: 0.7, transparent: true, opacity: 0.55 })
+    );
+    aquifer.position.copy(aquiferPos);
+    scene.add(aquifer);
+    const aquiferTopY = aquifer.position.y + (10 * scaleUp) / 2;
+    createLabel('Groundwater Source', new THREE.Vector3(aquifer.position.x, aquiferTopY + 10, aquifer.position.z), scene);
 
     // --- Water Flow Simulation ---
     function startSimulation() {
@@ -771,7 +825,7 @@ function SimulationPage() {
       stopSimulation();
       pipesRef.current = [];
     };
-  }, [isSimulating, disruptions, showWaterConnections]);
+  }, [isSimulating, disruptions, showWaterConnections, riverWaterAmount, groundWaterAmount]);
 
   // --- Refactored layout: simulation canvas, then controls, then ground section ---
   return (
@@ -840,6 +894,29 @@ function SimulationPage() {
               </div>
             </>
           )}
+          <div style={{ margin: '18px 0 8px 0', fontWeight: 700, color: '#2563eb' }}>Water Fetch Amounts</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <label style={{ fontSize: 15, color: '#2563eb' }}>
+              Kaveri River (total):
+              <input
+                type="number"
+                min="0"
+                value={riverWaterAmount}
+                onChange={e => setRiverWaterAmount(Number(e.target.value))}
+                style={{ marginLeft: 8, borderRadius: 6, border: '1.5px solid #e3f2fd', padding: '4px 10px', fontSize: 15, width: 100 }}
+              />
+            </label>
+            <label style={{ fontSize: 15, color: '#2563eb' }}>
+              Groundwater (total):
+              <input
+                type="number"
+                min="0"
+                value={groundWaterAmount}
+                onChange={e => setGroundWaterAmount(Number(e.target.value))}
+                style={{ marginLeft: 8, borderRadius: 6, border: '1.5px solid #e3f2fd', padding: '4px 10px', fontSize: 15, width: 100 }}
+              />
+            </label>
+          </div>
         </div>
       </div>
       {/* Side status indicators (left and right) */}
