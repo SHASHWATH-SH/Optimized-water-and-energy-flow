@@ -15,7 +15,7 @@ function createCylinder(start, end, radius, color, opacity = 1, metalness = 0.5,
   cylinder.position.copy(start).add(direction.multiplyScalar(0.5));
   return cylinder;
 }
-
+//ru656
 function createLabel(text, position, scene) {
   // Modern floating label using Sprite
   const canvas = document.createElement('canvas');
