@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { FaBug, FaCog, FaExclamationTriangle, FaPlay, FaRedo, FaStop, FaTint, FaTools, FaWater, FaWind } from 'react-icons/fa';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
@@ -50,6 +51,10 @@ function App() {
   const dropletsRef = useRef([]); // Store droplet meshes
   const buildingPipeIndices = useRef([]); // Store building pipe indices
 
+  // Instanced mesh references
+  let dropletInstancedMesh = null;
+  let trailInstancedMesh = null;
+
   // Helper to trigger disruptions (update)
   function triggerDisruption(type) {
     setDisruptions(d => {
@@ -61,7 +66,18 @@ function App() {
   useEffect(() => {
     let animationId;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xbfefff);
+    // Sky gradient background
+    const canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, '#bfefff'); // sky blue
+    grad.addColorStop(0.5, '#e0f7fa'); // light blue
+    grad.addColorStop(1, '#e6ffe6'); // horizon
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 32, 256);
+    const skyTex = new THREE.CanvasTexture(canvas);
+    scene.background = skyTex;
 
     // Camera
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 8000);
@@ -84,12 +100,31 @@ function App() {
     controls.maxPolarAngle = Math.PI / 2.05;
 
     // Lighting
-    const light = new THREE.DirectionalLight(0xffffff, 1.1);
-    light.position.set(80, 180, 80);
-    light.castShadow = true;
-    scene.add(light);
-    const ambient = new THREE.AmbientLight(0xffffff, 0.55);
+    // Sun (directional light) with soft shadows
+    const sun = new THREE.DirectionalLight(0xfff7e0, 1.25);
+    sun.position.set(-600, 1200, 800);
+    sun.castShadow = true;
+    sun.shadow.mapSize.width = 2048;
+    sun.shadow.mapSize.height = 2048;
+    sun.shadow.camera.left = -2000;
+    sun.shadow.camera.right = 2000;
+    sun.shadow.camera.top = 2000;
+    sun.shadow.camera.bottom = -2000;
+    sun.shadow.camera.near = 100;
+    sun.shadow.camera.far = 4000;
+    scene.add(sun);
+    // Sun glow (lens flare effect)
+    const sunGlow = new THREE.PointLight(0xfff7e0, 0.5, 0, 2);
+    sunGlow.position.copy(sun.position);
+    scene.add(sunGlow);
+    // Hemisphere light for natural sky/ground color
+    const hemi = new THREE.HemisphereLight(0xbfefff, 0x8fd694, 0.7);
+    scene.add(hemi);
+    // Ambient light for soft fill
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     scene.add(ambient);
+    // Fog for atmospheric depth
+    scene.fog = new THREE.FogExp2(0xbfefff, 0.00022);
 
     const scaleUp = 1.4; // 40% larger for realism
     const buildingScale = 2.0; // Double building size for realism
@@ -212,84 +247,149 @@ function App() {
           pos.z > parkMinZ && pos.z < parkMaxZ
         ) continue;
         buildingPositions.push(pos);
-        const width = (18 + Math.random() * 4) * scaleUp * buildingScale;
-        const depth = (18 + Math.random() * 4) * scaleUp * buildingScale;
-        const height = (22 + Math.random() * 36) * scaleUp * buildingScale;
+        // --- Realistic Building ---
+        // Vary shape and roof style
+        const width = (18 + Math.random() * 8) * scaleUp * buildingScale;
+        const depth = (18 + Math.random() * 8) * scaleUp * buildingScale;
+        const height = (28 + Math.random() * 48) * scaleUp * buildingScale;
         const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
+        // PBR wall material
+        const wallMat = new THREE.MeshPhysicalMaterial({
+          color,
+          roughness: 0.38 + Math.random() * 0.18,
+          metalness: 0.18 + Math.random() * 0.12,
+          clearcoat: 0.18,
+          sheen: 0.12,
+          reflectivity: 0.18,
+          transmission: 0.01
+        });
+        // Main building block
         const bldg = new THREE.Mesh(
           new THREE.BoxGeometry(width, height, depth),
-          new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.3 })
+          wallMat
         );
         bldg.position.copy(pos).setY(height / 2 + 1);
         bldg.castShadow = true;
         bldg.receiveShadow = true;
         scene.add(bldg);
-        // Main door
+        // Base steps
+        if (Math.random() < 0.5) {
+          const steps = new THREE.Mesh(
+            new THREE.BoxGeometry(width * 0.7, 2 * scaleUp, depth * 0.7),
+            new THREE.MeshStandardMaterial({ color: 0xbbb9b9, roughness: 0.7 })
+          );
+          steps.position.copy(pos).setY(2 * scaleUp);
+          scene.add(steps);
+        }
+        // Main door with frame
+        const doorW = 4 * scaleUp * buildingScale, doorH = 8 * scaleUp * buildingScale;
         const door = new THREE.Mesh(
-          new THREE.BoxGeometry(4 * scaleUp * buildingScale, 8 * scaleUp * buildingScale, 1.5 * scaleUp * buildingScale),
-          new THREE.MeshStandardMaterial({ color: 0x654321 })
+          new THREE.BoxGeometry(doorW, doorH, 1.5 * scaleUp * buildingScale),
+          new THREE.MeshPhysicalMaterial({ color: 0x654321, roughness: 0.5, metalness: 0.2, clearcoat: 0.2 })
         );
-        door.position.copy(pos).add(new THREE.Vector3(0, -height / 2 + 4 * scaleUp * buildingScale, depth / 2 + 0.8 * scaleUp * buildingScale));
+        door.position.copy(pos).add(new THREE.Vector3(0, -height / 2 + doorH / 2, depth / 2 + 0.8 * scaleUp * buildingScale));
         scene.add(door);
-        // Windows (3 rows x 3 columns)
-        for (let wy = 0; wy < 3; wy++) {
-          for (let wx = -1; wx <= 1; wx++) {
-            const windowMesh = new THREE.Mesh(
-              new THREE.BoxGeometry(2.5 * scaleUp * buildingScale, 3 * scaleUp * buildingScale, 0.7 * scaleUp * buildingScale),
-              new THREE.MeshStandardMaterial({ color: 0x87ceeb, metalness: 0.1, roughness: 0.2, emissive: 0x222244, emissiveIntensity: 0.15 })
+        // Door frame
+        const doorFrame = new THREE.Mesh(
+          new THREE.BoxGeometry(doorW + 1.2 * scaleUp, doorH + 1.2 * scaleUp, 0.5 * scaleUp * buildingScale),
+          new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.4 })
+        );
+        doorFrame.position.copy(door.position).add(new THREE.Vector3(0, 0, 0.7 * scaleUp * buildingScale));
+        scene.add(doorFrame);
+        // Windows (3-5 rows x 3-5 columns, random pattern)
+        const winRows = 3 + Math.floor(Math.random() * 3);
+        const winCols = 3 + Math.floor(Math.random() * 3);
+        for (let wy = 0; wy < winRows; wy++) {
+          for (let wx = -Math.floor(winCols / 2); wx <= Math.floor(winCols / 2); wx++) {
+            // Window frame
+            const frame = new THREE.Mesh(
+              new THREE.BoxGeometry(3.2 * scaleUp * buildingScale, 4.2 * scaleUp * buildingScale, 0.5 * scaleUp * buildingScale),
+              new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3 })
             );
-            windowMesh.position.copy(pos).add(new THREE.Vector3(wx * 5 * scaleUp * buildingScale, 8 * scaleUp * buildingScale + wy * 7 * scaleUp * buildingScale, depth / 2 + 0.8 * scaleUp * buildingScale));
-            scene.add(windowMesh);
+            frame.position.copy(pos).add(new THREE.Vector3(wx * 6 * scaleUp * buildingScale, 10 * scaleUp * buildingScale + wy * 7 * scaleUp * buildingScale, depth / 2 + 1.1 * scaleUp * buildingScale));
+            scene.add(frame);
+            // Window glass (glow at night)
+            const glass = new THREE.Mesh(
+              new THREE.BoxGeometry(2.2 * scaleUp * buildingScale, 3.2 * scaleUp * buildingScale, 0.7 * scaleUp * buildingScale),
+              new THREE.MeshPhysicalMaterial({
+                color: 0x87ceeb,
+                metalness: 0.25,
+                roughness: 0.12,
+                transmission: 0.7,
+                opacity: 0.92,
+                transparent: true,
+                emissive: Math.random() < 0.5 ? 0x222244 : 0xf7e97c,
+                emissiveIntensity: Math.random() < 0.5 ? 0.18 : 0.45
+              })
+            );
+            glass.position.copy(frame.position).add(new THREE.Vector3(0, 0, 0.2 * scaleUp * buildingScale));
+            scene.add(glass);
           }
         }
         // Rooftop details
-        if (Math.random() < 0.4) {
+        if (Math.random() < 0.5) {
           // Water tank
           const tank = new THREE.Mesh(
-            new THREE.CylinderGeometry(2 * scaleUp * buildingScale, 2 * scaleUp * buildingScale, 4 * scaleUp * buildingScale, 16),
-            new THREE.MeshStandardMaterial({ color: 0xcccccc })
+            new THREE.CylinderGeometry(2.2 * scaleUp * buildingScale, 2.2 * scaleUp * buildingScale, 4.5 * scaleUp * buildingScale, 18),
+            new THREE.MeshPhysicalMaterial({ color: 0xcccccc, roughness: 0.3, metalness: 0.7 })
           );
-          tank.position.copy(pos).setY(height + 4 * scaleUp * buildingScale);
+          tank.position.copy(pos).setY(height + 4.5 * scaleUp * buildingScale);
           scene.add(tank);
         }
-        if (Math.random() < 0.2) {
+        if (Math.random() < 0.3) {
           // Solar panel
           const panel = new THREE.Mesh(
-            new THREE.BoxGeometry(6 * scaleUp * buildingScale, 0.5 * scaleUp * buildingScale, 4 * scaleUp * buildingScale),
-            new THREE.MeshStandardMaterial({ color: 0x2222aa, roughness: 0.3, metalness: 0.7 })
+            new THREE.BoxGeometry(7 * scaleUp * buildingScale, 0.6 * scaleUp * buildingScale, 4.5 * scaleUp * buildingScale),
+            new THREE.MeshPhysicalMaterial({ color: 0x2222aa, roughness: 0.22, metalness: 0.85, clearcoat: 0.5 })
           );
-          panel.position.copy(pos).setY(height + 2.5 * scaleUp * buildingScale);
+          panel.position.copy(pos).setY(height + 2.8 * scaleUp * buildingScale);
           panel.rotation.x = -Math.PI / 8;
           scene.add(panel);
         }
-        if (Math.random() < 0.2) {
+        if (Math.random() < 0.25) {
           // AC unit
           const ac = new THREE.Mesh(
-            new THREE.BoxGeometry(2 * scaleUp * buildingScale, 1.2 * scaleUp * buildingScale, 1.2 * scaleUp * buildingScale),
-            new THREE.MeshStandardMaterial({ color: 0xe0e0e0, roughness: 0.6 })
+            new THREE.BoxGeometry(2.2 * scaleUp * buildingScale, 1.4 * scaleUp * buildingScale, 1.4 * scaleUp * buildingScale),
+            new THREE.MeshPhysicalMaterial({ color: 0xe0e0e0, roughness: 0.6, metalness: 0.3 })
           );
-          ac.position.copy(pos).setY(height + 2 * scaleUp * buildingScale).add(new THREE.Vector3(3 * scaleUp * buildingScale, 0, 0));
+          ac.position.copy(pos).setY(height + 2.2 * scaleUp * buildingScale).add(new THREE.Vector3(3.5 * scaleUp * buildingScale, 0, 0));
           scene.add(ac);
         }
-        if (Math.random() < 0.15) {
+        if (Math.random() < 0.18) {
           // Rooftop railing
           const rail = new THREE.Mesh(
-            new THREE.BoxGeometry(width - 2 * scaleUp * buildingScale, 0.5 * scaleUp * buildingScale, 0.5 * scaleUp * buildingScale),
+            new THREE.BoxGeometry(width - 2.5 * scaleUp * buildingScale, 0.6 * scaleUp * buildingScale, 0.6 * scaleUp * buildingScale),
             new THREE.MeshStandardMaterial({ color: 0x888888 })
           );
-          rail.position.copy(pos).setY(height + 2.8 * scaleUp * buildingScale).add(new THREE.Vector3(0, 0, depth / 2 - 0.3 * scaleUp * buildingScale));
+          rail.position.copy(pos).setY(height + 3.2 * scaleUp * buildingScale).add(new THREE.Vector3(0, 0, depth / 2 - 0.4 * scaleUp * buildingScale));
           scene.add(rail);
         }
         // Balconies/ledges
-        if (Math.random() < 0.25) {
+        if (Math.random() < 0.32) {
           for (let by = 0; by < 2; by++) {
             const balcony = new THREE.Mesh(
-              new THREE.BoxGeometry(6 * scaleUp * buildingScale, 0.7 * scaleUp * buildingScale, 2.2 * scaleUp * buildingScale),
-              new THREE.MeshStandardMaterial({ color: 0xb0b0b0, roughness: 0.5 })
+              new THREE.BoxGeometry(7 * scaleUp * buildingScale, 0.9 * scaleUp * buildingScale, 2.7 * scaleUp * buildingScale),
+              new THREE.MeshPhysicalMaterial({ color: 0xb0b0b0, roughness: 0.5, metalness: 0.2 })
             );
-            balcony.position.copy(pos).add(new THREE.Vector3(0, 10 * scaleUp * buildingScale + by * 10 * scaleUp * buildingScale, depth / 2 + 1.2 * scaleUp * buildingScale));
+            balcony.position.copy(pos).add(new THREE.Vector3(0, 12 * scaleUp * buildingScale + by * 12 * scaleUp * buildingScale, depth / 2 + 1.5 * scaleUp * buildingScale));
             scene.add(balcony);
+            // Balcony railing
+            const bRail = new THREE.Mesh(
+              new THREE.BoxGeometry(7 * scaleUp * buildingScale, 0.4 * scaleUp * buildingScale, 0.4 * scaleUp * buildingScale),
+              new THREE.MeshStandardMaterial({ color: 0x888888 })
+            );
+            bRail.position.copy(balcony.position).add(new THREE.Vector3(0, 0.6 * scaleUp * buildingScale, 1.2 * scaleUp * buildingScale));
+            scene.add(bRail);
           }
+        }
+        // Roof style: sometimes add a sloped or gabled roof
+        if (Math.random() < 0.22) {
+          const roof = new THREE.Mesh(
+            new THREE.ConeGeometry(width * 0.55, 8 * scaleUp * buildingScale, 4 + Math.floor(Math.random() * 4)),
+            new THREE.MeshPhysicalMaterial({ color: 0x7c4a02, roughness: 0.5, metalness: 0.2 })
+          );
+          roof.position.copy(pos).setY(height + 4 * scaleUp * buildingScale);
+          scene.add(roof);
         }
         createLabel(`Building (${row + 1},${col + 1})`, bldg.position, scene);
       }
@@ -425,8 +525,12 @@ function App() {
 
     // --- Water Flow Simulation ---
     function startSimulation() {
+      // Remove old instanced meshes if present
+      if (dropletInstancedMesh) scene.remove(dropletInstancedMesh);
+      if (trailInstancedMesh) scene.remove(trailInstancedMesh);
       dropletsRef.current.forEach(d => scene.remove(d.mesh));
       dropletsRef.current = [];
+
       // Highlight pipes during simulation
       pipesRef.current.forEach(({ pipe }) => {
         if (pipe.material.emissive) {
@@ -437,6 +541,10 @@ function App() {
       // For each pipe, add multiple droplets spaced evenly
       const numDroplets = 5;
       let dropletCount = 0;
+      let dropletTransforms = [];
+      let dropletColors = [];
+      let trailTransforms = [];
+      let trailColors = [];
       pipesRef.current.forEach(({ from, to, sourceType, type }, pipeIdx) => {
         // Disruption logic
         let color = sourceType === 'river' ? 0x3399ff : 0x00e6e6;
@@ -481,33 +589,74 @@ function App() {
         }
         if (!visible) return;
         for (let i = 0; i < numDroplets; i++) {
-          const droplet = new THREE.Mesh(
-            new THREE.SphereGeometry(2.5 * scaleUp, 18, 18), // larger, more visible
-            new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.9, transparent: true, opacity: 0.85 })
-          );
-          // Stagger droplets along the pipe
+          // Store transform and color for instanced mesh
           const t = i / numDroplets;
-          droplet.position.lerpVectors(from, to, t);
-          scene.add(droplet);
-          dropletsRef.current.push({ mesh: droplet, from, to, t, offset: t });
+          dropletTransforms.push({ from: from.clone(), to: to.clone(), t, offset: t });
+          dropletColors.push(color);
+          // Trails
+          for (let j = 1; j <= 4; j++) {
+            const tTrail = t - j * 0.04;
+            if (tTrail < 0) continue;
+            trailTransforms.push({ from: from.clone(), to: to.clone(), t: tTrail, offset: t, j });
+            trailColors.push(color);
+          }
           dropletCount++;
         }
-        // Add ripple at destination
+        // Add ripple at destination (keep as mesh for now)
         if (visible) {
           const ripple = new THREE.Mesh(
-            new THREE.RingGeometry(2 * scaleUp, 3.5 * scaleUp, 32),
-            new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.25 })
+            new THREE.RingGeometry(2.5 * scaleUp, 5.5 * scaleUp, 48),
+            new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.32 })
           );
           ripple.position.copy(to).add(new THREE.Vector3(0, 2 * scaleUp, 0));
           ripple.rotation.x = -Math.PI / 2;
           scene.add(ripple);
-          setTimeout(() => scene.remove(ripple), 1200);
+          // Animate ripple scale and fade
+          let rippleStart = Date.now();
+          function animateRipple() {
+            const elapsed = (Date.now() - rippleStart) / 900;
+            ripple.scale.set(1 + elapsed * 1.2, 1 + elapsed * 1.2, 1);
+            ripple.material.opacity = 0.32 * (1 - elapsed);
+            if (elapsed < 1) requestAnimationFrame(animateRipple);
+            else scene.remove(ripple);
+          }
+          animateRipple();
         }
       });
+      // Create instanced mesh for droplets
+      const dropletGeo = new THREE.SphereGeometry(4.2 * scaleUp, 24, 24);
+      const dropletMat = new THREE.MeshPhysicalMaterial({
+        color: 0x3399ff,
+        emissive: 0x3399ff,
+        emissiveIntensity: 1.2,
+        transparent: true,
+        opacity: 0.92,
+        transmission: 0.7,
+        roughness: 0.15,
+        metalness: 0.2,
+        clearcoat: 0.7,
+        ior: 1.33
+      });
+      dropletInstancedMesh = new THREE.InstancedMesh(dropletGeo, dropletMat, dropletTransforms.length);
+      // Create instanced mesh for trails
+      const trailGeo = new THREE.SphereGeometry(2.2 * scaleUp, 16, 16);
+      const trailMat = new THREE.MeshStandardMaterial({
+        color: 0x3399ff,
+        emissive: 0x3399ff,
+        emissiveIntensity: 0.5,
+        transparent: true,
+        opacity: 0.18
+      });
+      trailInstancedMesh = new THREE.InstancedMesh(trailGeo, trailMat, trailTransforms.length);
+      scene.add(dropletInstancedMesh);
+      scene.add(trailInstancedMesh);
+      // Store transforms for animation
+      dropletsRef.current = { dropletTransforms, trailTransforms, dropletInstancedMesh, trailInstancedMesh, dropletColors, trailColors };
       console.log('Droplets created:', dropletCount);
     }
     function stopSimulation() {
-      dropletsRef.current.forEach(d => scene.remove(d.mesh));
+      if (dropletsRef.current.dropletInstancedMesh) scene.remove(dropletsRef.current.dropletInstancedMesh);
+      if (dropletsRef.current.trailInstancedMesh) scene.remove(dropletsRef.current.trailInstancedMesh);
       dropletsRef.current = [];
       // Remove pipe highlight
       pipesRef.current.forEach(({ pipe }) => {
@@ -524,14 +673,34 @@ function App() {
       // Animate droplets if simulating
       if (isSimulating) {
         const speed = 0.008;
-        dropletsRef.current.forEach(droplet => {
-          droplet.t += speed;
-          if (droplet.t > 1) droplet.t -= 1; // Loop
-          droplet.mesh.position.lerpVectors(droplet.from, droplet.to, droplet.t);
-          // Optional: pulse effect
-          const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 200 + droplet.offset * Math.PI * 2);
-          droplet.mesh.material.opacity = 0.5 + 0.5 * pulse;
-        });
+        if (dropletsRef.current.dropletTransforms) {
+          // Animate droplets
+          for (let i = 0; i < dropletsRef.current.dropletTransforms.length; i++) {
+            let d = dropletsRef.current.dropletTransforms[i];
+            d.t += speed;
+            if (d.t > 1) d.t -= 1;
+            let tEased = 0.5 - 0.5 * Math.cos(Math.PI * d.t);
+            let pos = new THREE.Vector3().lerpVectors(d.from, d.to, tEased);
+            let mat = new THREE.Matrix4().makeTranslation(pos.x, pos.y, pos.z);
+            dropletsRef.current.dropletInstancedMesh.setMatrixAt(i, mat);
+            // Optionally, set color per instance
+            // dropletsRef.current.dropletInstancedMesh.setColorAt(i, new THREE.Color(dropletsRef.current.dropletColors[i]));
+          }
+          dropletsRef.current.dropletInstancedMesh.instanceMatrix.needsUpdate = true;
+          // Animate trails
+          for (let i = 0; i < dropletsRef.current.trailTransforms.length; i++) {
+            let tObj = dropletsRef.current.trailTransforms[i];
+            let tTrail = tObj.t + speed;
+            if (tTrail > 1) tTrail -= 1;
+            let tEasedTrail = 0.5 - 0.5 * Math.cos(Math.PI * (tTrail < 0 ? tTrail + 1 : tTrail));
+            let pos = new THREE.Vector3().lerpVectors(tObj.from, tObj.to, tEasedTrail);
+            let mat = new THREE.Matrix4().makeTranslation(pos.x, pos.y, pos.z);
+            dropletsRef.current.trailInstancedMesh.setMatrixAt(i, mat);
+            // Optionally, set color per instance
+            // dropletsRef.current.trailInstancedMesh.setColorAt(i, new THREE.Color(dropletsRef.current.trailColors[i]));
+          }
+          dropletsRef.current.trailInstancedMesh.instanceMatrix.needsUpdate = true;
+        }
       }
       renderer.render(scene, camera);
       animationId = requestAnimationFrame(animate);
@@ -560,15 +729,16 @@ function App() {
       {/* Floating status box */}
       <div style={{
         position: 'fixed', top: 24, left: 24, zIndex: 10,
-        background: 'rgba(255,255,255,0.96)', padding: 18, borderRadius: 14,
-        boxShadow: '0 2px 16px #0002', fontFamily: 'Segoe UI, Arial',
+        background: 'rgba(255,255,255,0.55)', padding: 20, borderRadius: 18,
+        boxShadow: '0 4px 32px #3399ff22', fontFamily: 'Segoe UI, Arial',
         minWidth: 220, maxWidth: 320, fontSize: 17, fontWeight: 500,
         display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
-        gap: 8, border: '1.5px solid #e0e0e0',
-        backdropFilter: 'blur(3px)'
+        gap: 10, border: '1.5px solid #cce0ff',
+        backdropFilter: 'blur(12px)',
+        transition: 'background 0.3s, box-shadow 0.3s',
       }}>
-        <span style={{ fontSize: 22, fontWeight: 700, color: '#3399ff', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span role="img" aria-label="status">💧</span> System Status
+        <span style={{ fontSize: 24, fontWeight: 700, color: '#3399ff', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <FaWater style={{ fontSize: 28, color: '#3399ff' }} /> System Status
         </span>
         <span style={{ fontSize: 16, marginTop: 2 }}>Water: <span style={{ color: '#3399ff', fontWeight: 600 }}>OK</span></span>
       </div>
@@ -577,21 +747,24 @@ function App() {
         <button
           style={{
             position: 'fixed', top: 32, right: 32, zIndex: 30,
-            padding: '18px 36px', fontSize: 20, borderRadius: 12, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 12px #3399ff22'
+            padding: '18px 36px', fontSize: 20, borderRadius: 14, background: 'rgba(51,153,255,0.92)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 16px #3399ff33',
+            display: 'flex', alignItems: 'center', gap: 14, backdropFilter: 'blur(8px)'
           }}
           onClick={() => setShowControls(true)}
+          title="Show simulation and disruption controls"
         >
-          ⚙️ Show Controls
+          <FaCog style={{ fontSize: 26 }} /> Show Controls
         </button>
       )}
       {showControls && (
         <div style={{
           position: 'fixed', top: 0, right: 0, height: '100vh', width: 320, zIndex: 20,
-          background: 'rgba(255,255,255,0.98)', boxShadow: '-2px 0 16px #0002',
+          background: 'rgba(255,255,255,0.65)', boxShadow: '-2px 0 32px #3399ff22',
           padding: '32px 24px 24px 24px', display: 'flex', flexDirection: 'column',
-          gap: 24, borderTopLeftRadius: 24, borderBottomLeftRadius: 24,
-          borderLeft: '1.5px solid #e0e0e0',
-          backdropFilter: 'blur(4px)'
+          gap: 24, borderTopLeftRadius: 32, borderBottomLeftRadius: 32,
+          borderLeft: '1.5px solid #cce0ff',
+          backdropFilter: 'blur(16px)',
+          transition: 'background 0.3s, box-shadow 0.3s',
         }}>
           {/* Segmented control for selecting section */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
@@ -600,71 +773,77 @@ function App() {
                 flex: 1,
                 padding: '10px 0',
                 fontSize: 16,
-                borderRadius: 8,
-                background: selectedControl === 'Water Flow' ? '#3399ff' : '#f4f8ff',
+                borderRadius: 10,
+                background: selectedControl === 'Water Flow' ? '#3399ff' : 'rgba(244,248,255,0.8)',
                 color: selectedControl === 'Water Flow' ? '#fff' : '#3399ff',
                 border: selectedControl === 'Water Flow' ? '2px solid #3399ff' : '1.5px solid #cce0ff',
                 fontWeight: 700,
                 cursor: 'pointer',
                 transition: 'background 0.2s, color 0.2s',
                 outline: 'none',
+                display: 'flex', alignItems: 'center', gap: 8
               }}
               onClick={() => setSelectedControl('Water Flow')}
+              title="Show water flow simulation controls"
             >
-              💧 Water Flow
+              <FaTint /> Water Flow
             </button>
             <button
               style={{
                 flex: 1,
                 padding: '10px 0',
                 fontSize: 16,
-                borderRadius: 8,
-                background: selectedControl === 'Disruptions' ? '#3399ff' : '#f4f8ff',
+                borderRadius: 10,
+                background: selectedControl === 'Disruptions' ? '#3399ff' : 'rgba(244,248,255,0.8)',
                 color: selectedControl === 'Disruptions' ? '#fff' : '#3399ff',
                 border: selectedControl === 'Disruptions' ? '2px solid #3399ff' : '1.5px solid #cce0ff',
                 fontWeight: 700,
                 cursor: 'pointer',
                 transition: 'background 0.2s, color 0.2s',
                 outline: 'none',
+                display: 'flex', alignItems: 'center', gap: 8
               }}
               onClick={() => setSelectedControl('Disruptions')}
+              title="Show disruption controls"
             >
-              🚨 Disruptions
+              <FaExclamationTriangle /> Disruptions
             </button>
           </div>
           {/* Section content */}
           {selectedControl === 'Water Flow' && (
             <>
               <div style={{ fontSize: 26, fontWeight: 700, color: '#222', marginBottom: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span role="img" aria-label="controls">⚙️</span> Simulation Controls
+                <FaTools style={{ color: '#3399ff' }} /> Simulation Controls
               </div>
               <button
-                style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 8, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #3399ff22', width: '100%', transition: 'background 0.2s' }}
+                style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 10, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #3399ff22', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
                 onClick={() => setIsSimulating(s => !s)}
+                title={isSimulating ? 'Stop the water flow simulation' : 'Start the water flow simulation'}
               >
-                {isSimulating ? '⏹️ Stop Simulation' : '▶️ Simulate Water Flow'}
+                {isSimulating ? <FaStop /> : <FaPlay />} {isSimulating ? 'Stop Simulation' : 'Simulate Water Flow'}
               </button>
             </>
           )}
           {selectedControl === 'Disruptions' && (
             <>
               <div style={{ fontSize: 20, fontWeight: 600, color: '#444', marginBottom: 6, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span role="img" aria-label="disruptions">🚨</span> Disruptions
+                <FaBug style={{ color: '#e67e22' }} /> Disruptions
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <button onClick={() => triggerDisruption('pipeLeak')} style={disruptionBtnStyle}>🚧 Pipe Leak</button>
-                <button onClick={() => triggerDisruption('wellDry')} style={disruptionBtnStyle}>💧 Well Dry</button>
-                <button onClick={() => triggerDisruption('riverPollution')} style={disruptionBtnStyle}>🟤 River Pollution</button>
-                <button onClick={() => triggerDisruption('pumpFailure')} style={disruptionBtnStyle}>⚡ Pump Failure</button>
-                <button onClick={() => triggerDisruption('reset')} style={{ ...disruptionBtnStyle, background: '#eee', color: '#333', fontWeight: 500 }}>🔄 Reset Disruptions</button>
+                <button onClick={() => triggerDisruption('pipeLeak')} style={disruptionBtnStyle} title="Simulate a pipe leak"><FaWind style={{ marginRight: 8 }} /> Pipe Leak</button>
+                <button onClick={() => triggerDisruption('wellDry')} style={disruptionBtnStyle} title="Simulate a well drying up"><FaTint style={{ marginRight: 8 }} /> Well Dry</button>
+                <button onClick={() => triggerDisruption('riverPollution')} style={disruptionBtnStyle} title="Simulate river pollution"><FaWater style={{ marginRight: 8 }} /> River Pollution</button>
+                <button onClick={() => triggerDisruption('pumpFailure')} style={disruptionBtnStyle} title="Simulate a pump failure"><FaCog style={{ marginRight: 8 }} /> Pump Failure</button>
+                <button onClick={() => triggerDisruption('reset')} style={{ ...disruptionBtnStyle, background: '#eee', color: '#333', fontWeight: 500 }} title="Reset all disruptions"><FaRedo style={{ marginRight: 8 }} /> Reset Disruptions</button>
               </div>
             </>
           )}
           <button
-            style={{ marginTop: 32, width: '100%', padding: '10px 0', fontSize: 16, borderRadius: 8, background: '#eee', color: '#3399ff', border: '1.5px solid #cce0ff', fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 4px #3399ff11' }}
+            style={{ marginTop: 32, width: '100%', padding: '10px 0', fontSize: 16, borderRadius: 10, background: '#eee', color: '#3399ff', border: '1.5px solid #cce0ff', fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 4px #3399ff11', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={() => setShowControls(false)}
+            title="Hide controls sidebar"
           >
-            ❌ Hide Controls
+            <FaStop /> Hide Controls
           </button>
           <div style={{ marginTop: 'auto', fontSize: 14, color: '#888', textAlign: 'center' }}>
             <span>Optimized Water & Energy Flow<br />Simulation UI</span>
