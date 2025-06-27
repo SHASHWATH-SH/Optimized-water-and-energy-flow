@@ -159,3 +159,5 @@ Preload storage or battery before a forecasted failure
 Reroute supply from nearby grids (in simulation)
 
 Shed non-critical load
+
+scene.background = new THREE.Color(0xff0000); // Red
