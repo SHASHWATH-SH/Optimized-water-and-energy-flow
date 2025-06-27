@@ -44,6 +44,8 @@ function App() {
     riverPollution: false,
     pumpFailure: false
   });
+  const [selectedControl, setSelectedControl] = useState('Water Flow');
+  const [showControls, setShowControls] = useState(false);
   const pipesRef = useRef([]); // Store pipe data for simulation
   const dropletsRef = useRef([]); // Store droplet meshes
   const buildingPipeIndices = useRef([]); // Store building pipe indices
@@ -131,7 +133,7 @@ function App() {
     walkway.position.set(-440 * scaleUp, 3, 80 * scaleUp);
     scene.add(walkway);
     createLabel('Riverside Walk', walkway.position.clone().add(new THREE.Vector3(0, 3, 0)), scene);
-    // Wells (stone, roof, bucket)
+    // Wells (stone, roof, bucket, animated water surface)
     const wellPositions = [
       new THREE.Vector3(startX - spacing * 0.7, 2, startZ - spacing * 0.7), // top-left outside
       new THREE.Vector3(startX + (gridCols - 1) * spacing + spacing * 0.7, 2, startZ - spacing * 0.7), // top-right outside
@@ -154,7 +156,7 @@ function App() {
       // Well base
       const well = new THREE.Mesh(
         new THREE.CylinderGeometry(7 * scaleUp, 7 * scaleUp, 16 * scaleUp, 24),
-        new THREE.MeshStandardMaterial({ color: 0x8a9ba8, roughness: 0.7 })
+        new THREE.MeshStandardMaterial({ color: 0x8a9ba8, roughness: 0.7, metalness: 0.5 })
       );
       well.position.copy(pos);
       scene.add(well);
@@ -173,6 +175,13 @@ function App() {
       );
       bucket.position.copy(pos).add(new THREE.Vector3(0, 8 * scaleUp, 2 * scaleUp));
       scene.add(bucket);
+      // Animated water surface in well
+      const wellWater = new THREE.Mesh(
+        new THREE.CylinderGeometry(6.2 * scaleUp, 6.2 * scaleUp, 1.2 * scaleUp, 24),
+        new THREE.MeshStandardMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.7, roughness: 0.2, metalness: 0.7, emissive: 0x3399ff, emissiveIntensity: 0.2 })
+      );
+      wellWater.position.copy(pos).add(new THREE.Vector3(0, 2.5 * scaleUp, 0));
+      scene.add(wellWater);
       createLabel('Well', pos, scene);
     });
     // Park (large, occupies 4x4 blocks in center)
@@ -360,9 +369,34 @@ function App() {
         }
       }
     }
-    // Water pipes (semi-transparent, metallic)
+    // Add flower patches
+    for (let i = 0; i < 8; i++) {
+      const flower = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.2 * scaleUp, 1.2 * scaleUp, 0.6 * scaleUp, 8),
+        new THREE.MeshStandardMaterial({ color: 0xff69b4, roughness: 0.5 })
+      );
+      const angle = Math.random() * Math.PI * 2;
+      const radius = (parkSize / 2 - 10 * scaleUp) * Math.random();
+      flower.position.copy(parkCenter).add(new THREE.Vector3(Math.cos(angle) * radius, 2.5 * scaleUp, Math.sin(angle) * radius));
+      scene.add(flower);
+    }
+    // Add benches
+    for (let i = 0; i < 4; i++) {
+      const bench = new THREE.Mesh(
+        new THREE.BoxGeometry(10 * scaleUp, 2 * scaleUp, 2.5 * scaleUp),
+        new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.8 })
+      );
+      const angle = (i / 4) * Math.PI * 2;
+      const radius = parkSize / 2 - 18 * scaleUp;
+      bench.position.copy(parkCenter).add(new THREE.Vector3(Math.cos(angle) * radius, 3 * scaleUp, Math.sin(angle) * radius));
+      scene.add(bench);
+    }
+    // Water pipes (realistic: thicker, metallic, blue glow)
     function addWaterPipe(from, to, sourceType, type = 'building') {
-      const pipe = createCylinder(from, to, 1.5 * scaleUp, 0x3399ff, 0.7, 0.7, 0.2);
+      const pipe = createCylinder(from, to, 2.5 * scaleUp, 0x3399ff, 0.8, 0.8, 0.2);
+      pipe.material.emissive = new THREE.Color(0x3399ff);
+      pipe.material.emissiveIntensity = 0.12;
+      pipe.material.metalness = 0.7;
       scene.add(pipe);
       pipesRef.current.push({ from: from.clone(), to: to.clone(), pipe, sourceType, type });
     }
@@ -402,6 +436,7 @@ function App() {
       });
       // For each pipe, add multiple droplets spaced evenly
       const numDroplets = 5;
+      let dropletCount = 0;
       pipesRef.current.forEach(({ from, to, sourceType, type }, pipeIdx) => {
         // Disruption logic
         let color = sourceType === 'river' ? 0x3399ff : 0x00e6e6;
@@ -440,23 +475,36 @@ function App() {
           pipesRef.current[pipeIdx].pipe.material.color.setHex(pipeColor);
           pipesRef.current[pipeIdx].pipe.material.emissive.setHex(pipeColor);
         }
-        // Add warning label if needed
+        // Add warning label if needed (with warning icon)
         if (warningLabel) {
-          createLabel(warningLabel, to.clone().add(new THREE.Vector3(0, 18 * scaleUp, 0)), scene);
+          createLabel('⚠️ ' + warningLabel, to.clone().add(new THREE.Vector3(0, 18 * scaleUp, 0)), scene);
         }
         if (!visible) return;
         for (let i = 0; i < numDroplets; i++) {
           const droplet = new THREE.Mesh(
-            new THREE.SphereGeometry(2.2 * scaleUp, 16, 16),
-            new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.9, transparent: true, opacity: 0.7 })
+            new THREE.SphereGeometry(2.5 * scaleUp, 18, 18), // larger, more visible
+            new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.9, transparent: true, opacity: 0.85 })
           );
           // Stagger droplets along the pipe
           const t = i / numDroplets;
           droplet.position.lerpVectors(from, to, t);
           scene.add(droplet);
           dropletsRef.current.push({ mesh: droplet, from, to, t, offset: t });
+          dropletCount++;
+        }
+        // Add ripple at destination
+        if (visible) {
+          const ripple = new THREE.Mesh(
+            new THREE.RingGeometry(2 * scaleUp, 3.5 * scaleUp, 32),
+            new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.25 })
+          );
+          ripple.position.copy(to).add(new THREE.Vector3(0, 2 * scaleUp, 0));
+          ripple.rotation.x = -Math.PI / 2;
+          scene.add(ripple);
+          setTimeout(() => scene.remove(ripple), 1200);
         }
       });
+      console.log('Droplets created:', dropletCount);
     }
     function stopSimulation() {
       dropletsRef.current.forEach(d => scene.remove(d.mesh));
@@ -508,30 +556,139 @@ function App() {
 
   return (
     <div>
-      <div ref={mountRef} style={{ width: '100vw', height: '90vh' }} />
+      <div ref={mountRef} style={{ width: '100vw', height: '100vh' }} />
+      {/* Floating status box */}
       <div style={{
-        position: 'absolute', top: 20, left: 20, zIndex: 2,
-        background: 'rgba(255,255,255,0.92)', padding: 14, borderRadius: 10,
-        boxShadow: '0 2px 8px #0002', fontFamily: 'Segoe UI, Arial'
+        position: 'fixed', top: 24, left: 24, zIndex: 10,
+        background: 'rgba(255,255,255,0.96)', padding: 18, borderRadius: 14,
+        boxShadow: '0 2px 16px #0002', fontFamily: 'Segoe UI, Arial',
+        minWidth: 220, maxWidth: 320, fontSize: 17, fontWeight: 500,
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+        gap: 8, border: '1.5px solid #e0e0e0',
+        backdropFilter: 'blur(3px)'
       }}>
-        <b style={{ fontSize: 20 }}>System Status</b>
-        <div style={{ marginTop: 8, fontSize: 16 }}>Water: <span style={{ color: '#3399ff' }}>OK</span></div>
-        <button
-          style={{ marginTop: 16, padding: '8px 18px', fontSize: 16, borderRadius: 6, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 4px #0001' }}
-          onClick={() => setIsSimulating(s => !s)}
-        >
-          {isSimulating ? 'Stop Simulation' : 'Simulate Water Flow'}
-        </button>
-        <div style={{ marginTop: 16 }}>
-          <button onClick={() => triggerDisruption('pipeLeak')}>Pipe Leak</button>
-          <button onClick={() => triggerDisruption('wellDry')}>Well Dry</button>
-          <button onClick={() => triggerDisruption('riverPollution')}>River Pollution</button>
-          <button onClick={() => triggerDisruption('pumpFailure')}>Pump Failure</button>
-          <button onClick={() => triggerDisruption('reset')}>Reset Disruptions</button>
-        </div>
+        <span style={{ fontSize: 22, fontWeight: 700, color: '#3399ff', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span role="img" aria-label="status">💧</span> System Status
+        </span>
+        <span style={{ fontSize: 16, marginTop: 2 }}>Water: <span style={{ color: '#3399ff', fontWeight: 600 }}>OK</span></span>
       </div>
+      {/* Modern right sidebar for controls */}
+      {!showControls && (
+        <button
+          style={{
+            position: 'fixed', top: 32, right: 32, zIndex: 30,
+            padding: '18px 36px', fontSize: 20, borderRadius: 12, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 12px #3399ff22'
+          }}
+          onClick={() => setShowControls(true)}
+        >
+          ⚙️ Show Controls
+        </button>
+      )}
+      {showControls && (
+        <div style={{
+          position: 'fixed', top: 0, right: 0, height: '100vh', width: 320, zIndex: 20,
+          background: 'rgba(255,255,255,0.98)', boxShadow: '-2px 0 16px #0002',
+          padding: '32px 24px 24px 24px', display: 'flex', flexDirection: 'column',
+          gap: 24, borderTopLeftRadius: 24, borderBottomLeftRadius: 24,
+          borderLeft: '1.5px solid #e0e0e0',
+          backdropFilter: 'blur(4px)'
+        }}>
+          {/* Segmented control for selecting section */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+            <button
+              style={{
+                flex: 1,
+                padding: '10px 0',
+                fontSize: 16,
+                borderRadius: 8,
+                background: selectedControl === 'Water Flow' ? '#3399ff' : '#f4f8ff',
+                color: selectedControl === 'Water Flow' ? '#fff' : '#3399ff',
+                border: selectedControl === 'Water Flow' ? '2px solid #3399ff' : '1.5px solid #cce0ff',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'background 0.2s, color 0.2s',
+                outline: 'none',
+              }}
+              onClick={() => setSelectedControl('Water Flow')}
+            >
+              💧 Water Flow
+            </button>
+            <button
+              style={{
+                flex: 1,
+                padding: '10px 0',
+                fontSize: 16,
+                borderRadius: 8,
+                background: selectedControl === 'Disruptions' ? '#3399ff' : '#f4f8ff',
+                color: selectedControl === 'Disruptions' ? '#fff' : '#3399ff',
+                border: selectedControl === 'Disruptions' ? '2px solid #3399ff' : '1.5px solid #cce0ff',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'background 0.2s, color 0.2s',
+                outline: 'none',
+              }}
+              onClick={() => setSelectedControl('Disruptions')}
+            >
+              🚨 Disruptions
+            </button>
+          </div>
+          {/* Section content */}
+          {selectedControl === 'Water Flow' && (
+            <>
+              <div style={{ fontSize: 26, fontWeight: 700, color: '#222', marginBottom: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span role="img" aria-label="controls">⚙️</span> Simulation Controls
+              </div>
+              <button
+                style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 8, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #3399ff22', width: '100%', transition: 'background 0.2s' }}
+                onClick={() => setIsSimulating(s => !s)}
+              >
+                {isSimulating ? '⏹️ Stop Simulation' : '▶️ Simulate Water Flow'}
+              </button>
+            </>
+          )}
+          {selectedControl === 'Disruptions' && (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 600, color: '#444', marginBottom: 6, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span role="img" aria-label="disruptions">🚨</span> Disruptions
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <button onClick={() => triggerDisruption('pipeLeak')} style={disruptionBtnStyle}>🚧 Pipe Leak</button>
+                <button onClick={() => triggerDisruption('wellDry')} style={disruptionBtnStyle}>💧 Well Dry</button>
+                <button onClick={() => triggerDisruption('riverPollution')} style={disruptionBtnStyle}>🟤 River Pollution</button>
+                <button onClick={() => triggerDisruption('pumpFailure')} style={disruptionBtnStyle}>⚡ Pump Failure</button>
+                <button onClick={() => triggerDisruption('reset')} style={{ ...disruptionBtnStyle, background: '#eee', color: '#333', fontWeight: 500 }}>🔄 Reset Disruptions</button>
+              </div>
+            </>
+          )}
+          <button
+            style={{ marginTop: 32, width: '100%', padding: '10px 0', fontSize: 16, borderRadius: 8, background: '#eee', color: '#3399ff', border: '1.5px solid #cce0ff', fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 4px #3399ff11' }}
+            onClick={() => setShowControls(false)}
+          >
+            ❌ Hide Controls
+          </button>
+          <div style={{ marginTop: 'auto', fontSize: 14, color: '#888', textAlign: 'center' }}>
+            <span>Optimized Water & Energy Flow<br />Simulation UI</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// Modern button style for disruptions
+const disruptionBtnStyle = {
+  padding: '10px 0',
+  fontSize: 16,
+  borderRadius: 7,
+  background: '#f4f8ff',
+  color: '#3399ff',
+  border: '1.5px solid #cce0ff',
+  cursor: 'pointer',
+  fontWeight: 600,
+  boxShadow: '0 1px 4px #3399ff11',
+  width: '100%',
+  transition: 'background 0.2s, color 0.2s',
+  outline: 'none',
+};
 
 export default App;
