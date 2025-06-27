@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
@@ -37,6 +37,9 @@ function createLabel(text, position, scene) {
 
 function App() {
   const mountRef = useRef(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const pipesRef = useRef([]); // Store pipe data for simulation
+  const dropletsRef = useRef([]); // Store droplet meshes
 
   useEffect(() => {
     let animationId;
@@ -71,26 +74,26 @@ function App() {
     const ambient = new THREE.AmbientLight(0xffffff, 0.55);
     scene.add(ambient);
 
-    // --- Realistic and beautiful 6x6 city grid ---
-    const gridRows = 6, gridCols = 6, spacing = 60;
+    // --- Realistic and beautiful 12x12 city grid (doubled area) ---
+    const gridRows = 12, gridCols = 12, spacing = 60;
     const startX = -((gridCols - 1) * spacing) / 2;
     const startZ = -((gridRows - 1) * spacing) / 2;
     // Ground (solid grass color)
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(600, 600),
+      new THREE.PlaneGeometry(1200, 1200),
       new THREE.MeshStandardMaterial({ color: 0x8fd694, roughness: 0.7 })
     );
     ground.receiveShadow = true;
     ground.rotation.x = -Math.PI / 2;
     scene.add(ground);
-    // River (curved, embanked)
+    // River (curved, embanked) - scale up and move to left side
     const riverShape = new THREE.Shape();
-    riverShape.moveTo(-260, -180);
-    riverShape.bezierCurveTo(-280, -80, -280, 80, -260, 180);
-    riverShape.lineTo(-220, 180);
-    riverShape.bezierCurveTo(-240, 80, -240, -80, -220, -180);
-    riverShape.lineTo(-260, -180);
-    const extrudeSettings = { depth: 10, bevelEnabled: false, steps: 1, curveSegments: 32 };
+    riverShape.moveTo(-520, -360);
+    riverShape.bezierCurveTo(-560, -160, -560, 160, -520, 360);
+    riverShape.lineTo(-440, 360);
+    riverShape.bezierCurveTo(-480, 160, -480, -160, -440, -360);
+    riverShape.lineTo(-520, -360);
+    const extrudeSettings = { depth: 20, bevelEnabled: false, steps: 1, curveSegments: 32 };
     const riverGeom = new THREE.ExtrudeGeometry(riverShape, extrudeSettings);
     const riverMat = new THREE.MeshPhysicalMaterial({
       color: 0x3399ff, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.85, clearcoat: 0.5
@@ -99,21 +102,23 @@ function App() {
     river.position.set(0, 1, 0);
     river.rotation.x = -Math.PI / 2;
     scene.add(river);
-    createLabel('Cauvery River', new THREE.Vector3(-250, 6, 0), scene);
+    createLabel('Cauvery River', new THREE.Vector3(-500, 6, 0), scene);
     // River walkway
     const walkway = new THREE.Mesh(
-      new THREE.BoxGeometry(100, 1, 14),
+      new THREE.BoxGeometry(200, 1, 28),
       new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.8 })
     );
-    walkway.position.set(-220, 3, 40);
+    walkway.position.set(-440, 3, 80);
     scene.add(walkway);
     createLabel('Riverside Walk', walkway.position.clone().add(new THREE.Vector3(0, 3, 0)), scene);
     // Wells (stone, roof, bucket)
+    // Move wells outside the grid corners to avoid overlap with buildings
     const wellPositions = [
-      new THREE.Vector3(startX + (gridCols - 1) * spacing, 2, startZ), // top-right
-      new THREE.Vector3(startX, 2, startZ + (gridRows - 1) * spacing), // bottom-left
-      new THREE.Vector3(startX + (gridCols - 1) * spacing, 2, startZ + (gridRows - 1) * spacing), // bottom-right
-      new THREE.Vector3(startX + 3 * spacing, 2, startZ + 3 * spacing) // center
+      new THREE.Vector3(startX - spacing * 0.7, 2, startZ - spacing * 0.7), // top-left outside
+      new THREE.Vector3(startX + (gridCols - 1) * spacing + spacing * 0.7, 2, startZ - spacing * 0.7), // top-right outside
+      new THREE.Vector3(startX - spacing * 0.7, 2, startZ + (gridRows - 1) * spacing + spacing * 0.7), // bottom-left outside
+      new THREE.Vector3(startX + (gridCols - 1) * spacing + spacing * 0.7, 2, startZ + (gridRows - 1) * spacing + spacing * 0.7), // bottom-right outside
+      new THREE.Vector3(startX + 6 * spacing, 2, startZ + 6 * spacing) // center
     ];
     wellPositions.forEach((pos, i) => {
       // Well base
@@ -140,13 +145,13 @@ function App() {
       scene.add(bucket);
       createLabel('Well', pos, scene);
     });
-    // Buildings (6x6 grid, skip 2x2 park in center, realistic details)
+    // Buildings (12x12 grid, skip 4x4 park in center, realistic details)
     const buildingPositions = [];
     const buildingColors = [0xf5f5f5, 0xe0c097, 0xb0b0b0, 0x8d99ae, 0x6d6875, 0x457b9d, 0xa8dadc, 0xf4a261, 0xe76f51, 0x264653];
     for (let row = 0; row < gridRows; row++) {
       for (let col = 0; col < gridCols; col++) {
-        // Park occupies center 2x2: (2,2), (2,3), (3,2), (3,3)
-        if ((row === 2 || row === 3) && (col === 2 || col === 3)) continue;
+        // Park occupies center 4x4: (4,4)-(7,7)
+        if ((row >= 4 && row <= 7) && (col >= 4 && col <= 7)) continue;
         const pos = new THREE.Vector3(startX + col * spacing, 12, startZ + row * spacing);
         buildingPositions.push(pos);
         const width = 18 + Math.random() * 4;
@@ -231,19 +236,19 @@ function App() {
         createLabel(`Building (${row + 1},${col + 1})`, bldg.position, scene);
       }
     }
-    // Park (large, occupies 2x2 blocks in center)
-    const parkSize = spacing * 2 + 18;
+    // Park (large, occupies 4x4 blocks in center)
+    const parkSize = spacing * 4 + 36;
     const park = new THREE.Mesh(
       new THREE.BoxGeometry(parkSize, 2, parkSize, 8, 1, 8),
       new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.6 })
     );
-    park.position.set(startX + 2.5 * spacing, 2, startZ + 2.5 * spacing);
+    park.position.set(startX + 5.5 * spacing, 2, startZ + 5.5 * spacing);
     park.castShadow = true;
     scene.add(park);
     createLabel('Central Park', park.position, scene);
     // Park path
     const path = new THREE.Mesh(
-      new THREE.TorusGeometry(18, 1.2, 16, 40),
+      new THREE.TorusGeometry(36, 2.4, 16, 40),
       new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.8 })
     );
     path.position.copy(park.position).setY(3.5);
@@ -251,10 +256,10 @@ function App() {
     scene.add(path);
     // Park pond
     const pond = new THREE.Mesh(
-      new THREE.CylinderGeometry(8, 8, 1, 24),
+      new THREE.CylinderGeometry(16, 16, 2, 24),
       new THREE.MeshStandardMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.7, roughness: 0.3, metalness: 0.5 })
     );
-    pond.position.copy(park.position).add(new THREE.Vector3(10, 2, -10));
+    pond.position.copy(park.position).add(new THREE.Vector3(20, 2, -20));
     scene.add(pond);
     // Park trees and benches in rows (robust, beautiful trees)
     const numRows = 3, numCols = 4;
@@ -317,14 +322,20 @@ function App() {
       }
     }
     // Water pipes (semi-transparent, metallic)
-    function addWaterPipe(from, to) {
+    // Store pipe source type for simulation
+    function addWaterPipe(from, to, sourceType) {
       const pipe = createCylinder(from, to, 1.5, 0x3399ff, 0.7, 0.7, 0.2);
       scene.add(pipe);
+      // Store pipe data for simulation, including source type
+      pipesRef.current.push({ from: from.clone(), to: to.clone(), pipe, sourceType });
     }
     // Assign water source to each building and connect with pipes
-    function getNearestWell(pos) {
-      let minDist = Infinity, nearest = wellPositions[0];
-      for (const w of wellPositions) {
+    function getQuadrantWell(pos) {
+      // Corner wells: 0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right
+      // Use only these for buildings
+      const cornerWells = wellPositions.slice(0, 4);
+      let minDist = Infinity, nearest = null;
+      for (const w of cornerWells) {
         const d = pos.distanceTo(w);
         if (d < minDist) { minDist = d; nearest = w; }
       }
@@ -333,36 +344,78 @@ function App() {
     for (let i = 0; i < buildingPositions.length; i++) {
       const pos = buildingPositions[i];
       const col = Math.round((pos.x - startX) / spacing);
-      let source, label;
+      let source, label, sourceType;
       if (col <= 1) {
-        source = new THREE.Vector3(-250, 2, 0);
+        source = new THREE.Vector3(-500, 2, 0);
         label = 'From Cauvery';
+        sourceType = 'river';
       } else {
-        source = getNearestWell(pos);
+        source = getQuadrantWell(pos);
         label = 'From Well';
+        sourceType = 'well';
       }
-      addWaterPipe(source, pos);
+      addWaterPipe(source, pos, sourceType);
       createLabel(`Building (${label})`, pos, scene);
     }
-    // Connect park to nearest well
-    const parkSource = getNearestWell(park.position);
-    addWaterPipe(parkSource, park.position);
+    // Connect park to center well only
+    const parkSource = wellPositions[4];
+    addWaterPipe(parkSource, park.position, 'well');
     createLabel('Central Park (From Well)', park.position, scene);
+
+    // --- Water Flow Simulation ---
+    function startSimulation() {
+      // Remove old droplets
+      dropletsRef.current.forEach(d => scene.remove(d.mesh));
+      dropletsRef.current = [];
+      // For each pipe, add a droplet at the start, color by source
+      pipesRef.current.forEach(({ from, to, sourceType }) => {
+        const color = sourceType === 'river' ? 0x3399ff : 0x00e6e6; // blue for river, cyan for well
+        const droplet = new THREE.Mesh(
+          new THREE.SphereGeometry(2.2, 16, 16),
+          new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 })
+        );
+        droplet.position.copy(from);
+        scene.add(droplet);
+        dropletsRef.current.push({ mesh: droplet, from, to, t: 0 }); // t: 0=start, 1=end
+      });
+    }
+    function stopSimulation() {
+      dropletsRef.current.forEach(d => scene.remove(d.mesh));
+      dropletsRef.current = [];
+    }
 
     // Animation loop
     function animate() {
       controls.update();
+      // Animate droplets if simulating
+      if (isSimulating) {
+        const speed = 0.008; // Adjust for flow speed
+        dropletsRef.current.forEach(droplet => {
+          droplet.t += speed;
+          if (droplet.t > 1) droplet.t = 0; // Loop
+          droplet.mesh.position.lerpVectors(droplet.from, droplet.to, droplet.t);
+        });
+      }
       renderer.render(scene, camera);
       animationId = requestAnimationFrame(animate);
     }
     animate();
 
+    // React to simulation state changes
+    if (isSimulating) {
+      startSimulation();
+    } else {
+      stopSimulation();
+    }
+
     // Cleanup
     return () => {
       cancelAnimationFrame(animationId);
       mountRef.current.removeChild(renderer.domElement);
+      stopSimulation();
+      pipesRef.current = [];
     };
-  }, []);
+  }, [isSimulating]);
 
   return (
     <div>
@@ -374,9 +427,15 @@ function App() {
       }}>
         <b style={{ fontSize: 20 }}>System Status</b>
         <div style={{ marginTop: 8, fontSize: 16 }}>Water: <span style={{ color: '#3399ff' }}>OK</span></div>
+        <button
+          style={{ marginTop: 16, padding: '8px 18px', fontSize: 16, borderRadius: 6, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 4px #0001' }}
+          onClick={() => setIsSimulating(s => !s)}
+        >
+          {isSimulating ? 'Stop Simulation' : 'Simulate Water Flow'}
+        </button>
       </div>
     </div>
   );
 }
 
-export default App; 
+export default App;
