@@ -2,6 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FaBug, FaCog, FaExclamationTriangle, FaPlay, FaRedo, FaStop, FaTint, FaTools, FaWater, FaWind } from 'react-icons/fa';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Loader from './components/Loader';
+import Navbar from './components/Navbar';
+import Home from './components/Home';
+import Models from './components/Models';
 
 function createCylinder(start, end, radius, color, opacity = 1, metalness = 0.5, roughness = 0.3) {
   const direction = new THREE.Vector3().subVectors(end, start);
@@ -36,7 +41,7 @@ function createLabel(text, position, scene) {
   scene.add(sprite);
 }
 
-function App() {
+function SimulationPage() {
   const mountRef = useRef(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [disruptions, setDisruptions] = useState({
@@ -47,6 +52,7 @@ function App() {
   });
   const [selectedControl, setSelectedControl] = useState('Water Flow');
   const [showControls, setShowControls] = useState(false);
+  const [showWaterConnections, setShowWaterConnections] = useState(false);
   const pipesRef = useRef([]); // Store pipe data for simulation
   const dropletsRef = useRef([]); // Store droplet meshes
   const buildingPipeIndices = useRef([]); // Store building pipe indices
@@ -66,17 +72,38 @@ function App() {
   useEffect(() => {
     let animationId;
     const scene = new THREE.Scene();
-    // Sky gradient background
-    const canvas = document.createElement('canvas');
-    canvas.width = 32; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    const grad = ctx.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, '#bfefff'); // sky blue
-    grad.addColorStop(0.5, '#e0f7fa'); // light blue
-    grad.addColorStop(1, '#e6ffe6'); // horizon
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 32, 256);
-    const skyTex = new THREE.CanvasTexture(canvas);
+    // --- Realistic sky with clouds and distant mountains ---
+    const skyCanvas = document.createElement('canvas');
+    skyCanvas.width = 512; skyCanvas.height = 256;
+    const skyCtx = skyCanvas.getContext('2d');
+    // Sky gradient
+    const grad = skyCtx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, '#7ecfff'); // top sky blue
+    grad.addColorStop(0.5, '#bfefff'); // mid
+    grad.addColorStop(0.8, '#e6ffe6'); // horizon
+    grad.addColorStop(1, '#b7e0c2'); // ground haze
+    skyCtx.fillStyle = grad;
+    skyCtx.fillRect(0, 0, 512, 256);
+    // Distant mountains
+    skyCtx.beginPath();
+    skyCtx.moveTo(0, 180);
+    for (let x = 0; x <= 512; x += 32) {
+      skyCtx.lineTo(x, 180 - 18 * Math.sin(x / 80) - 12 * Math.cos(x / 40));
+    }
+    skyCtx.lineTo(512, 256); skyCtx.lineTo(0, 256); skyCtx.closePath();
+    skyCtx.fillStyle = '#a3b18a';
+    skyCtx.globalAlpha = 0.7;
+    skyCtx.fill();
+    skyCtx.globalAlpha = 1;
+    // Clouds
+    for (let i = 0; i < 8; i++) {
+      const cx = Math.random() * 512, cy = 40 + Math.random() * 80;
+      skyCtx.beginPath();
+      skyCtx.ellipse(cx, cy, 32 + Math.random() * 24, 16 + Math.random() * 8, 0, 0, 2 * Math.PI);
+      skyCtx.fillStyle = 'rgba(255,255,255,0.7)';
+      skyCtx.fill();
+    }
+    const skyTex = new THREE.CanvasTexture(skyCanvas);
     scene.background = skyTex;
 
     // Camera
@@ -135,9 +162,28 @@ function App() {
     const startX = 200 + -((gridCols - 1) * spacing) / 2;
     const startZ = -((gridRows - 1) * spacing) / 2;
     // Ground (solid grass color, much larger)
+    const groundTexCanvas = document.createElement('canvas');
+    groundTexCanvas.width = 256; groundTexCanvas.height = 256;
+    const gtx = groundTexCanvas.getContext('2d');
+    // Grass base
+    gtx.fillStyle = '#8fd694';
+    gtx.fillRect(0, 0, 256, 256);
+    // Add noise for texture
+    for (let i = 0; i < 8000; i++) {
+      const x = Math.random() * 256, y = Math.random() * 256;
+      gtx.fillStyle = `rgba(60,160,60,${Math.random() * 0.18 + 0.08})`;
+      gtx.beginPath(); gtx.arc(x, y, Math.random() * 2.2 + 0.5, 0, 2 * Math.PI); gtx.fill();
+    }
+    // Some dirt patches
+    for (let i = 0; i < 1200; i++) {
+      const x = Math.random() * 256, y = Math.random() * 256;
+      gtx.fillStyle = `rgba(180,140,80,${Math.random() * 0.12 + 0.04})`;
+      gtx.beginPath(); gtx.arc(x, y, Math.random() * 2.8 + 0.5, 0, 2 * Math.PI); gtx.fill();
+    }
+    const groundTex = new THREE.CanvasTexture(groundTexCanvas);
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(4000, 4000),
-      new THREE.MeshStandardMaterial({ color: 0x8fd694, roughness: 0.7 })
+      new THREE.MeshStandardMaterial({ map: groundTex, color: 0x8fd694, roughness: 0.7 })
     );
     ground.receiveShadow = true;
     ground.rotation.x = -Math.PI / 2;
@@ -493,6 +539,8 @@ function App() {
     }
     // Water pipes (realistic: thicker, metallic, blue glow)
     function addWaterPipe(from, to, sourceType, type = 'building') {
+      // Only add pipes if showWaterConnections is true
+      if (!showWaterConnections) return;
       const pipe = createCylinder(from, to, 2.5 * scaleUp, 0x3399ff, 0.8, 0.8, 0.2);
       pipe.material.emissive = new THREE.Color(0x3399ff);
       pipe.material.emissiveIntensity = 0.12;
@@ -717,106 +765,60 @@ function App() {
     // Cleanup
     return () => {
       cancelAnimationFrame(animationId);
-      mountRef.current.removeChild(renderer.domElement);
+      if (mountRef.current && renderer.domElement && mountRef.current.contains(renderer.domElement)) {
+        mountRef.current.removeChild(renderer.domElement);
+      }
       stopSimulation();
       pipesRef.current = [];
     };
-  }, [isSimulating, disruptions]);
+  }, [isSimulating, disruptions, showWaterConnections]);
 
+  // --- Refactored layout: simulation canvas, then controls, then ground section ---
   return (
-    <div>
-      <div ref={mountRef} style={{ width: '100vw', height: '100vh' }} />
-      {/* Floating status box */}
-      <div style={{
-        position: 'fixed', top: 24, left: 24, zIndex: 10,
-        background: 'rgba(255,255,255,0.55)', padding: 20, borderRadius: 18,
-        boxShadow: '0 4px 32px #3399ff22', fontFamily: 'Segoe UI, Arial',
-        minWidth: 220, maxWidth: 320, fontSize: 17, fontWeight: 500,
-        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
-        gap: 10, border: '1.5px solid #cce0ff',
-        backdropFilter: 'blur(12px)',
-        transition: 'background 0.3s, box-shadow 0.3s',
-      }}>
-        <span style={{ fontSize: 24, fontWeight: 700, color: '#3399ff', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <FaWater style={{ fontSize: 28, color: '#3399ff' }} /> System Status
-        </span>
-        <span style={{ fontSize: 16, marginTop: 2 }}>Water: <span style={{ color: '#3399ff', fontWeight: 600 }}>OK</span></span>
-      </div>
-      {/* Modern right sidebar for controls */}
-      {!showControls && (
-        <button
-          style={{
-            position: 'fixed', top: 32, right: 32, zIndex: 30,
-            padding: '18px 36px', fontSize: 20, borderRadius: 14, background: 'rgba(51,153,255,0.92)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 16px #3399ff33',
-            display: 'flex', alignItems: 'center', gap: 14, backdropFilter: 'blur(8px)'
-          }}
-          onClick={() => setShowControls(true)}
-          title="Show simulation and disruption controls"
-        >
-          <FaCog style={{ fontSize: 26 }} /> Show Controls
-        </button>
-      )}
-      {showControls && (
-        <div style={{
-          position: 'fixed', top: 0, right: 0, height: '100vh', width: 320, zIndex: 20,
-          background: 'rgba(255,255,255,0.65)', boxShadow: '-2px 0 32px #3399ff22',
-          padding: '32px 24px 24px 24px', display: 'flex', flexDirection: 'column',
-          gap: 24, borderTopLeftRadius: 32, borderBottomLeftRadius: 32,
-          borderLeft: '1.5px solid #cce0ff',
-          backdropFilter: 'blur(16px)',
-          transition: 'background 0.3s, box-shadow 0.3s',
-        }}>
-          {/* Segmented control for selecting section */}
+    <div style={{ width: '100vw', minHeight: '100vh', background: '#e3f2fd', position: 'relative' }}>
+      {/* Show Water Connections Button */}
+      <button
+        style={{ position: 'absolute', top: 24, right: 32, zIndex: 30, padding: '14px 32px', fontSize: 18, borderRadius: 12, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, boxShadow: '0 2px 16px #2563eb22', letterSpacing: 1 }}
+        onClick={() => setShowWaterConnections(s => !s)}
+      >
+        {showWaterConnections ? 'Hide Water Connections' : 'Show Water Connections'}
+      </button>
+      {/* 3D Simulation Canvas */}
+      <div ref={mountRef} style={{ width: '100vw', height: '70vh', background: '#bfefff', position: 'relative' }} />
+      {/* Top-left overlay: System Status and Simulation Controls */}
+      <div style={{ position: 'absolute', top: 32, left: 32, zIndex: 20, display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* System Status Panel */}
+        <div style={{ minWidth: 260, maxWidth: 340, background: 'rgba(255,255,255,0.85)', borderRadius: 18, boxShadow: '0 4px 32px #2563eb22', padding: 20, fontFamily: 'inherit', fontSize: 18, fontWeight: 500, marginBottom: 0 }}>
+          <span style={{ fontSize: 22, fontWeight: 700, color: '#2563eb', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <FaWater style={{ fontSize: 26, color: '#43e97b' }} /> System Status
+          </span>
+          <span style={{ fontSize: 15, marginTop: 2 }}>Water: <span style={{ color: '#43e97b', fontWeight: 600 }}>OK</span></span>
+        </div>
+        {/* Simulation Controls Panel */}
+        <div style={{ minWidth: 260, maxWidth: 340, background: 'rgba(255,255,255,0.85)', borderRadius: 18, boxShadow: '0 4px 32px #2563eb22', padding: 20, fontFamily: 'inherit', fontSize: 18, fontWeight: 500 }}>
           <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
             <button
-              style={{
-                flex: 1,
-                padding: '10px 0',
-                fontSize: 16,
-                borderRadius: 10,
-                background: selectedControl === 'Water Flow' ? '#3399ff' : 'rgba(244,248,255,0.8)',
-                color: selectedControl === 'Water Flow' ? '#fff' : '#3399ff',
-                border: selectedControl === 'Water Flow' ? '2px solid #3399ff' : '1.5px solid #cce0ff',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'background 0.2s, color 0.2s',
-                outline: 'none',
-                display: 'flex', alignItems: 'center', gap: 8
-              }}
+              style={{ flex: 1, padding: '10px 0', fontSize: 16, borderRadius: 10, background: selectedControl === 'Water Flow' ? '#2563eb' : '#f5f7fa', color: selectedControl === 'Water Flow' ? '#fff' : '#2563eb', border: selectedControl === 'Water Flow' ? '2px solid #2563eb' : '1.5px solid #e3f2fd', fontWeight: 700, cursor: 'pointer', transition: 'background 0.2s, color 0.2s', outline: 'none', display: 'flex', alignItems: 'center', gap: 8 }}
               onClick={() => setSelectedControl('Water Flow')}
               title="Show water flow simulation controls"
             >
               <FaTint /> Water Flow
             </button>
             <button
-              style={{
-                flex: 1,
-                padding: '10px 0',
-                fontSize: 16,
-                borderRadius: 10,
-                background: selectedControl === 'Disruptions' ? '#3399ff' : 'rgba(244,248,255,0.8)',
-                color: selectedControl === 'Disruptions' ? '#fff' : '#3399ff',
-                border: selectedControl === 'Disruptions' ? '2px solid #3399ff' : '1.5px solid #cce0ff',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'background 0.2s, color 0.2s',
-                outline: 'none',
-                display: 'flex', alignItems: 'center', gap: 8
-              }}
+              style={{ flex: 1, padding: '10px 0', fontSize: 16, borderRadius: 10, background: selectedControl === 'Disruptions' ? '#2563eb' : '#f5f7fa', color: selectedControl === 'Disruptions' ? '#fff' : '#2563eb', border: selectedControl === 'Disruptions' ? '2px solid #2563eb' : '1.5px solid #e3f2fd', fontWeight: 700, cursor: 'pointer', transition: 'background 0.2s, color 0.2s', outline: 'none', display: 'flex', alignItems: 'center', gap: 8 }}
               onClick={() => setSelectedControl('Disruptions')}
               title="Show disruption controls"
             >
               <FaExclamationTriangle /> Disruptions
             </button>
           </div>
-          {/* Section content */}
           {selectedControl === 'Water Flow' && (
             <>
-              <div style={{ fontSize: 26, fontWeight: 700, color: '#222', marginBottom: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <FaTools style={{ color: '#3399ff' }} /> Simulation Controls
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#2563eb', marginBottom: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <FaTools style={{ color: '#43e97b' }} /> Simulation Controls
               </div>
               <button
-                style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 10, background: '#3399ff', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #3399ff22', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
+                style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 10, background: '#43e97b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #43e97b22', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
                 onClick={() => setIsSimulating(s => !s)}
                 title={isSimulating ? 'Stop the water flow simulation' : 'Start the water flow simulation'}
               >
@@ -826,7 +828,7 @@ function App() {
           )}
           {selectedControl === 'Disruptions' && (
             <>
-              <div style={{ fontSize: 20, fontWeight: 600, color: '#444', marginBottom: 6, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#2563eb', marginBottom: 6, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <FaBug style={{ color: '#e67e22' }} /> Disruptions
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -838,18 +840,29 @@ function App() {
               </div>
             </>
           )}
-          <button
-            style={{ marginTop: 32, width: '100%', padding: '10px 0', fontSize: 16, borderRadius: 10, background: '#eee', color: '#3399ff', border: '1.5px solid #cce0ff', fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 4px #3399ff11', display: 'flex', alignItems: 'center', gap: 8 }}
-            onClick={() => setShowControls(false)}
-            title="Hide controls sidebar"
-          >
-            <FaStop /> Hide Controls
-          </button>
-          <div style={{ marginTop: 'auto', fontSize: 14, color: '#888', textAlign: 'center' }}>
-            <span>Optimized Water & Energy Flow<br />Simulation UI</span>
-          </div>
         </div>
-      )}
+      </div>
+      {/* Side status indicators (left and right) */}
+      <div style={{ position: 'absolute', top: '30%', left: 24, zIndex: 10, background: 'rgba(255,255,255,0.7)', borderRadius: 14, boxShadow: '0 2px 16px #2563eb22', padding: 14, minWidth: 120, fontFamily: 'inherit', fontWeight: 600, color: '#2563eb', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <FaWater style={{ fontSize: 22, color: '#43e97b' }} />
+        <span>Left Status</span>
+        <span style={{ fontSize: 15, color: '#43e97b' }}>OK</span>
+      </div>
+      <div style={{ position: 'absolute', top: '30%', right: 24, zIndex: 10, background: 'rgba(255,255,255,0.7)', borderRadius: 14, boxShadow: '0 2px 16px #2563eb22', padding: 14, minWidth: 120, fontFamily: 'inherit', fontWeight: 600, color: '#2563eb', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <FaWater style={{ fontSize: 22, color: '#43e97b' }} />
+        <span>Right Status</span>
+        <span style={{ fontSize: 15, color: '#43e97b' }}>OK</span>
+      </div>
+      {/* Natural ground section */}
+      <div style={{ width: '100vw', minHeight: 120, background: 'linear-gradient(0deg, #b7e0c2 0%, #e3f2fd 100%)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', fontFamily: 'inherit', fontSize: 22, color: '#2563eb', fontWeight: 700, letterSpacing: 1, boxShadow: '0 -8px 32px #2563eb22' }}>
+        <span style={{ marginBottom: 24 }}>Nature-inspired ground — CityResource AI Simulation Environment</span>
+      </div>
+      {/* Groundwater Source */}
+      <div style={{ position: 'absolute', top: 100, left: 200, zIndex: 10, background: 'rgba(255,255,255,0.7)', borderRadius: 14, boxShadow: '0 2px 16px #2563eb22', padding: 14, minWidth: 120, fontFamily: 'inherit', fontWeight: 600, color: '#2563eb', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <FaWater style={{ fontSize: 22, color: '#43e97b' }} />
+        <span>Groundwater Source</span>
+        <span style={{ fontSize: 15, color: '#43e97b' }}>OK</span>
+      </div>
     </div>
   );
 }
@@ -870,4 +883,23 @@ const disruptionBtnStyle = {
   outline: 'none',
 };
 
-export default App;
+function MainApp() {
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 2200); // Loader for 2.2s
+    return () => clearTimeout(timer);
+  }, []);
+  if (loading) return <Loader />;
+  return (
+    <Router>
+      <Navbar />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/simulation" element={<SimulationPage />} />
+        <Route path="/models" element={<Models />} />
+      </Routes>
+    </Router>
+  );
+}
+
+export default MainApp;
