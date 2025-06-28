@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FaBug, FaCog, FaExclamationTriangle, FaPlay, FaRedo, FaStop, FaTint, FaTools, FaWater, FaWind } from 'react-icons/fa';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Loader from './components/Loader';
 import Navbar from './components/Navbar';
 import Home from './components/Home';
@@ -10,6 +10,20 @@ import Models from './components/Models';
 import Login from './components/Login';
 import AdminDashboard from './components/AdminDashboard';
 import BuildingDashboard from './components/BuildingDashboard';
+
+// Add CSS for spinner animation
+const spinnerStyle = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+
+// Inject the CSS
+const styleSheet = document.createElement('style');
+styleSheet.type = 'text/css';
+styleSheet.innerText = spinnerStyle;
+document.head.appendChild(styleSheet);
 
 function createCylinder(start, end, radius, color, opacity = 1, metalness = 0.5, roughness = 0.3) {
   const direction = new THREE.Vector3().subVectors(end, start);
@@ -80,6 +94,9 @@ function SimulationPage() {
   const [showBuildingDetails, setShowBuildingDetails] = useState(false);
   const [clickedBuilding, setClickedBuilding] = useState(null);
   
+  // Building instances array for disruption effects
+  const buildingInstances = useRef([]);
+  
   // Backend data state
   const [waterRequests, setWaterRequests] = useState([]);
   const [approvedRequests, setApprovedRequests] = useState([]);
@@ -94,6 +111,20 @@ function SimulationPage() {
   const [totalWaterNeeded, setTotalWaterNeeded] = useState(0);
   const [extraWaterRequests, setExtraWaterRequests] = useState([]);
   const [eventWaterRequests, setEventWaterRequests] = useState([]);
+
+  // Disruption simulation state
+  const [disruptionActive, setDisruptionActive] = useState(false);
+  const [disruptionType, setDisruptionType] = useState(null);
+  const [disruptionLocation, setDisruptionLocation] = useState(null);
+  const [disruptionResults, setDisruptionResults] = useState(null);
+  const [showDisruptionResults, setShowDisruptionResults] = useState(false);
+  const [disruptionProgress, setDisruptionProgress] = useState(0);
+  const [brokenPipes, setBrokenPipes] = useState([]);
+  const [affectedBuildings, setAffectedBuildings] = useState([]);
+  const [optimizationSuggestions, setOptimizationSuggestions] = useState('');
+
+  // Baseline simulation data for disruption analysis
+  const [baselineSimulationData, setBaselineSimulationData] = useState(null);
 
   // TODO: Add fallback building data here
 
@@ -326,6 +357,22 @@ function SimulationPage() {
         console.log('Simulation results:', simulationData);
         setSimulationResults(simulationData.results || {});
         setBuildingAllocations(simulationData.building_allocations || {});
+        
+        // Store baseline data for disruption analysis
+        const baselineData = {
+          buildings: buildings,
+          totalWaterNeeded: totalWaterNeeded,
+          buildingAllocations: simulationData.building_allocations || {},
+          simulationResults: simulationData.results || {},
+          approvedRequests: approvedRequests,
+          extraWaterRequests: extraWaterRequests,
+          eventWaterRequests: eventWaterRequests,
+          riverWaterAmount: riverWaterAmount,
+          groundWaterAmount: groundWaterAmount,
+          timestamp: new Date().toISOString()
+        };
+        console.log('Storing baseline data:', baselineData);
+        setBaselineSimulationData(baselineData);
         
         // Get AI suggestions
         await getAiSuggestions(simulationData.results);
@@ -1078,6 +1125,32 @@ function SimulationPage() {
     // Animation loop
     function animate() {
       controls.update();
+      
+      // Animate disruption effects
+      if (disruptionActive && disruptionLocation) {
+        // Update disruption indicator pulsing
+        if (window.disruptionMesh) {
+          const scale = 1 + 0.3 * Math.sin(Date.now() * 0.005);
+          window.disruptionMesh.scale.set(scale, scale, scale);
+        }
+        
+        // Animate water spray for pipe leak
+        if (disruptionType === 'pipeLeak' && window.sprayMesh) {
+          window.sprayMesh.rotation.y += 0.02;
+          const sprayScale = 1 + 0.2 * Math.sin(Date.now() * 0.01);
+          window.sprayMesh.scale.set(sprayScale, sprayScale, sprayScale);
+        }
+        
+        // Animate affected buildings
+        affectedBuildings.forEach(building => {
+          const buildingIndex = building.id - 1;
+          if (buildingInstances.current[buildingIndex]) {
+            const pulse = 0.8 + 0.2 * Math.sin(Date.now() * 0.003 + buildingIndex);
+            buildingInstances.current[buildingIndex].material.opacity = pulse;
+          }
+        });
+      }
+      
       // Animate droplets if simulating
       if (isSimulating) {
         const speed = 0.008;
@@ -1122,11 +1195,84 @@ function SimulationPage() {
       stopSimulation();
     }
 
+    // Add disruption visual effects
+    if (disruptionActive && disruptionLocation) {
+      // Create disruption indicator
+      const disruptionGeometry = new THREE.SphereGeometry(5, 16, 16);
+      const disruptionMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xff0000, 
+        transparent: true, 
+        opacity: 0.7,
+        wireframe: true 
+      });
+      const disruptionMesh = new THREE.Mesh(disruptionGeometry, disruptionMaterial);
+      disruptionMesh.position.set(disruptionLocation.x, 10, disruptionLocation.z);
+      scene.add(disruptionMesh);
+      window.disruptionMesh = disruptionMesh;
+      
+      // Add specific effects based on disruption type
+      if (disruptionType === 'pipeLeak') {
+        // Broken pipe visual
+        const brokenPipeGeometry = new THREE.CylinderGeometry(0.5, 0.5, 20, 8);
+        const brokenPipeMaterial = new THREE.MeshBasicMaterial({ 
+          color: 0x8B0000, 
+          transparent: true, 
+          opacity: 0.8 
+        });
+        const brokenPipe = new THREE.Mesh(brokenPipeGeometry, brokenPipeMaterial);
+        brokenPipe.position.set(disruptionLocation.x, 5, disruptionLocation.z);
+        brokenPipe.rotation.z = Math.PI / 2;
+        scene.add(brokenPipe);
+        
+        // Water spray effect
+        const sprayGeometry = new THREE.ConeGeometry(2, 8, 8);
+        const sprayMaterial = new THREE.MeshBasicMaterial({ 
+          color: 0x00BFFF, 
+          transparent: true, 
+          opacity: 0.6 
+        });
+        const spray = new THREE.Mesh(sprayGeometry, sprayMaterial);
+        spray.position.set(disruptionLocation.x + 10, 8, disruptionLocation.z);
+        spray.rotation.z = -Math.PI / 2;
+        scene.add(spray);
+        window.sprayMesh = spray;
+      }
+      
+      // Highlight affected buildings
+      affectedBuildings.forEach(building => {
+        const buildingIndex = building.id - 1;
+        if (buildingInstances.current[buildingIndex]) {
+          buildingInstances.current[buildingIndex].material.color.setHex(0xff6666);
+          buildingInstances.current[buildingIndex].material.transparent = true;
+          buildingInstances.current[buildingIndex].material.opacity = 0.8;
+        }
+      });
+    } else {
+      // Clean up disruption effects
+      if (window.disruptionMesh) {
+        scene.remove(window.disruptionMesh);
+        window.disruptionMesh = null;
+      }
+      if (window.sprayMesh) {
+        scene.remove(window.sprayMesh);
+        window.sprayMesh = null;
+      }
+      
+      // Reset building colors
+      buildingInstances.current.forEach(instance => {
+        if (instance && instance.material) {
+          instance.material.color.setHex(0x4a90e2);
+          instance.material.transparent = false;
+          instance.material.opacity = 1;
+        }
+      });
+    }
+
     // Cleanup
     return () => {
       cancelAnimationFrame(animationId);
       if (mountRef.current && renderer.domElement && mountRef.current.contains(renderer.domElement)) {
-        mountRef.current.removeChild(renderer.domElement);
+      mountRef.current.removeChild(renderer.domElement);
       }
       stopSimulation();
       pipesRef.current = [];
@@ -1134,6 +1280,410 @@ function SimulationPage() {
       renderer.domElement.removeEventListener('click', onMouseClick);
     };
   }, [isSimulating, disruptions, showWaterConnections, riverWaterAmount, groundWaterAmount, buildings]);
+
+  // Disruption simulation functions
+  const runDisruptionSimulation = async () => {
+    if (!disruptionType || !disruptionLocation) {
+      alert('Please select both disruption type and location');
+      return;
+    }
+
+    // Check if baseline simulation data exists
+    if (!baselineSimulationData && buildings.length === 0) {
+      alert('Please run a comprehensive simulation first to establish baseline data for disruption analysis');
+      return;
+    }
+
+    setDisruptionActive(true);
+    setDisruptionProgress(0);
+    setDisruptionResults(null);
+    setShowDisruptionResults(false);
+    setBrokenPipes([]);
+    setAffectedBuildings([]);
+    setOptimizationSuggestions('');
+
+    try {
+      // Use baseline data for disruption simulation, with fallback to current state
+      const baseline = baselineSimulationData || {
+        buildings: buildings,
+        totalWaterNeeded: totalWaterNeeded,
+        buildingAllocations: buildingAllocations,
+        simulationResults: simulationResults,
+        approvedRequests: approvedRequests,
+        extraWaterRequests: extraWaterRequests,
+        eventWaterRequests: eventWaterRequests,
+        riverWaterAmount: riverWaterAmount,
+        groundWaterAmount: groundWaterAmount,
+        timestamp: new Date().toISOString()
+      };
+      console.log('Using baseline data for disruption simulation:', baseline);
+      console.log('Baseline buildings count:', baseline.buildings?.length);
+      console.log('Baseline total water needed:', baseline.totalWaterNeeded);
+      console.log('Disruption type:', disruptionType);
+      console.log('Disruption location:', disruptionLocation);
+
+      // Simulate disruption impact
+      setDisruptionProgress(20);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      let affectedBuildingsList = [];
+      let brokenPipesList = [];
+      let waterShortage = 0;
+      let efficiencyLoss = 0;
+
+      // Determine affected buildings based on disruption type and location
+      if (disruptionType === 'pipe_leak') {
+        // Simulate pipe leak affecting buildings in the same area
+        const locationArea = disruptionLocation.split('_')[0]; // e.g., "north", "south"
+        // For pipe leak, affect buildings based on location area
+        const affectedPercentage = 0.3; // 30% of buildings affected
+        const numAffected = Math.floor(baseline.buildings.length * affectedPercentage);
+        affectedBuildingsList = baseline.buildings.slice(0, numAffected);
+        
+        brokenPipesList = [`${locationArea}_main_pipe`, `${locationArea}_secondary_pipe`];
+        waterShortage = baseline.totalWaterNeeded * 0.25; // 25% water loss
+        efficiencyLoss = 35;
+      } else if (disruptionType === 'well_dry') {
+        // Simulate well drying up affecting groundwater-dependent buildings
+        const affectedPercentage = 0.4; // 40% of buildings affected
+        const numAffected = Math.floor(baseline.buildings.length * affectedPercentage);
+        affectedBuildingsList = baseline.buildings.slice(0, numAffected);
+        
+        brokenPipesList = ['groundwater_main_pipe', 'groundwater_pump_1', 'groundwater_pump_2'];
+        waterShortage = baseline.totalWaterNeeded * 0.4; // 40% water loss
+        efficiencyLoss = 50;
+      } else if (disruptionType === 'river_pollution') {
+        // Simulate river pollution affecting river-dependent buildings
+        const affectedPercentage = 0.35; // 35% of buildings affected
+        const numAffected = Math.floor(baseline.buildings.length * affectedPercentage);
+        affectedBuildingsList = baseline.buildings.slice(0, numAffected);
+        
+        brokenPipesList = ['river_intake_pipe', 'river_treatment_pipe'];
+        waterShortage = baseline.totalWaterNeeded * 0.35; // 35% water loss
+        efficiencyLoss = 45;
+      } else if (disruptionType === 'pump_failure') {
+        // Simulate pump failure affecting all buildings
+        const affectedPercentage = 0.5; // 50% of buildings affected
+        const numAffected = Math.floor(baseline.buildings.length * affectedPercentage);
+        affectedBuildingsList = baseline.buildings.slice(0, numAffected);
+        
+        brokenPipesList = ['main_pump_1', 'main_pump_2', 'distribution_pump'];
+        waterShortage = baseline.totalWaterNeeded * 0.3; // 30% water loss
+        efficiencyLoss = 40;
+      }
+
+      setDisruptionProgress(50);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Calculate disruption results
+      const disruptionResults = {
+        disruptionType,
+        disruptionLocation,
+        affectedBuildings: affectedBuildingsList.length,
+        totalBuildings: baseline.buildings.length,
+        waterShortage: Math.round(waterShortage),
+        efficiencyLoss,
+        estimatedRecoveryTime: Math.floor(Math.random() * 24) + 6, // 6-30 hours
+        emergencyMeasures: [
+          'Activate backup water sources',
+          'Implement water rationing',
+          'Deploy emergency repair teams',
+          'Notify affected buildings'
+        ],
+        costImpact: Math.round(waterShortage * 0.5), // ₹0.5 per liter
+        timestamp: new Date().toISOString()
+      };
+
+      setDisruptionProgress(80);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      setBrokenPipes(brokenPipesList);
+      setAffectedBuildings(affectedBuildingsList);
+      setDisruptionResults(disruptionResults);
+      setDisruptionProgress(100);
+      setShowDisruptionResults(true);
+
+      // Generate optimization suggestions for disruption recovery
+      const suggestions = await generateDisruptionSuggestions(disruptionResults, baseline);
+      setOptimizationSuggestions(suggestions);
+
+    } catch (error) {
+      console.error('Error running disruption simulation:', error);
+      console.error('Baseline data:', baselineSimulationData);
+      console.error('Disruption type:', disruptionType);
+      console.error('Disruption location:', disruptionLocation);
+      alert(`Error running disruption simulation: ${error.message || 'Unknown error occurred'}`);
+    } finally {
+      setDisruptionActive(false);
+    }
+  };
+
+  const calculateDisruptionImpact = (type, affectedBuildings) => {
+    const totalBuildings = buildings.length;
+    const affectedCount = affectedBuildings.length;
+    const affectedPercentage = (affectedCount / totalBuildings) * 100;
+    
+    let waterReduction, duration, severity;
+    
+    switch (type) {
+      case 'pipeLeak':
+        waterReduction = 0.15; // 15% water loss
+        duration = '2-4 hours';
+        severity = 'Medium';
+        break;
+      case 'wellDry':
+        waterReduction = 0.25; // 25% reduction
+        duration = '6-12 hours';
+        severity = 'High';
+        break;
+      case 'riverPollution':
+        waterReduction = 0.30; // 30% reduction
+        duration = '12-24 hours';
+        severity = 'Critical';
+        break;
+      case 'pumpFailure':
+        waterReduction = 0.20; // 20% reduction
+        duration = '4-8 hours';
+        severity = 'High';
+        break;
+      default:
+        waterReduction = 0.10;
+        duration = 'Unknown';
+        severity = 'Low';
+    }
+    
+    return {
+      affectedBuildings: affectedCount,
+      affectedPercentage,
+      waterReduction,
+      duration,
+      severity,
+      totalWaterNeeded: totalWaterNeeded,
+      reducedWaterAvailable: totalWaterNeeded * (1 - waterReduction),
+      emergencyWaterNeeded: totalWaterNeeded * waterReduction
+    };
+  };
+
+  const runDisruptionOptimization = async (type, impact) => {
+    // Simulate the Python optimization algorithms
+    const optimizationData = {
+      disruption_type: type,
+      affected_buildings: impact.affectedBuildings,
+      water_reduction: impact.waterReduction,
+      total_demand: impact.totalWaterNeeded,
+      available_water: impact.reducedWaterAvailable,
+      buildings: buildings.map(b => ({
+        id: b.id,
+        building_name: b.building_name,
+        building_code: b.building_code,
+        water_requirement: b.water_requirement,
+        priority: b.priority,
+        sector: b.sector || 'Municipal',
+        is_affected: impact.affectedBuildings.some(ab => ab.id === b.id)
+      }))
+    };
+    
+    // Simulate optimization results based on the Python algorithms
+    const results = simulateOptimizationAlgorithms(optimizationData);
+    
+    // Generate AI suggestions
+    const suggestions = generateDisruptionSuggestions(type, impact, results);
+    setOptimizationSuggestions(suggestions);
+    
+    return results;
+  };
+
+  const simulateOptimizationAlgorithms = (data) => {
+    // Simulate water_alloc.py linear programming optimization
+    const linearProgrammingResults = simulateLinearProgramming(data);
+    
+    // Simulate water_optim.py multi-objective optimization
+    const multiObjectiveResults = simulateMultiObjectiveOptimization(data);
+    
+    return {
+      linear_programming: linearProgrammingResults,
+      multi_objective: multiObjectiveResults,
+      recommended_approach: data.water_reduction > 0.2 ? 'multi_objective' : 'linear_programming'
+    };
+  };
+
+  const simulateLinearProgramming = (data) => {
+    const { total_demand, available_water, buildings } = data;
+    
+    // Simulate LP optimization
+    const allocation_factor = Math.min(1, available_water / total_demand);
+    const priority_weights = { 1: 1.0, 2: 0.7, 3: 0.4 };
+    
+    const allocations = buildings.map(building => {
+      const priority_weight = priority_weights[building.priority] || 0.5;
+      const base_allocation = building.water_requirement * allocation_factor;
+      const priority_adjusted = base_allocation * priority_weight;
+      
+      return {
+        building_id: building.id,
+        building_name: building.building_name,
+        original_demand: building.water_requirement,
+        allocated_water: Math.min(building.water_requirement, priority_adjusted),
+        unmet_demand: Math.max(0, building.water_requirement - priority_adjusted),
+        priority_met: priority_adjusted >= building.water_requirement * 0.8,
+        allocation_efficiency: (priority_adjusted / building.water_requirement) * 100
+      };
+    });
+    
+    const total_allocated = allocations.reduce((sum, a) => sum + a.allocated_water, 0);
+    const total_unmet = allocations.reduce((sum, a) => sum + a.unmet_demand, 0);
+    const high_priority_met = allocations.filter(a => a.priority_met && buildings.find(b => b.id === a.building_id)?.priority === 1).length;
+    
+    return {
+      method: 'Linear Programming',
+      total_allocated,
+      total_unmet,
+      allocation_efficiency: (total_allocated / total_demand) * 100,
+      high_priority_compliance: high_priority_met / buildings.filter(b => b.priority === 1).length * 100,
+      building_allocations: allocations
+    };
+  };
+
+  const simulateMultiObjectiveOptimization = (data) => {
+    const { total_demand, available_water, buildings } = data;
+    
+    // Simulate multi-objective optimization with sustainability focus
+    const sustainability_weight = 0.7;
+    const supply_weight = 0.3;
+    
+    // Calculate sustainable allocation considering groundwater levels
+    const sustainable_factor = Math.min(1, available_water / total_demand * 0.8); // Conservative approach
+    
+    const allocations = buildings.map(building => {
+      const base_allocation = building.water_requirement * sustainable_factor;
+      const priority_multiplier = building.priority === 1 ? 1.2 : building.priority === 2 ? 1.0 : 0.8;
+      const sustainable_allocation = base_allocation * priority_multiplier;
+      
+      return {
+        building_id: building.id,
+        building_name: building.building_name,
+        original_demand: building.water_requirement,
+        allocated_water: Math.min(building.water_requirement, sustainable_allocation),
+        unmet_demand: Math.max(0, building.water_requirement - sustainable_allocation),
+        sustainability_score: (sustainable_allocation / building.water_requirement) * 100,
+        energy_efficiency: building.priority === 1 ? 95 : building.priority === 2 ? 85 : 75,
+        groundwater_impact: building.priority === 1 ? 'Low' : building.priority === 2 ? 'Medium' : 'High'
+      };
+    });
+    
+    const total_allocated = allocations.reduce((sum, a) => sum + a.allocated_water, 0);
+    const avg_sustainability = allocations.reduce((sum, a) => sum + a.sustainability_score, 0) / allocations.length;
+    const avg_energy_efficiency = allocations.reduce((sum, a) => sum + a.energy_efficiency, 0) / allocations.length;
+    
+    return {
+      method: 'Multi-Objective Optimization',
+      total_allocated,
+      sustainability_score: avg_sustainability,
+      energy_efficiency: avg_energy_efficiency,
+      supply_ratio: (total_allocated / total_demand) * 100,
+      building_allocations: allocations
+    };
+  };
+
+  const generateDisruptionSuggestions = async (disruptionResults, baseline) => {
+    try {
+      const prompt = `Analyze this water system disruption and provide comprehensive recovery recommendations:
+
+DISRUPTION DETAILS:
+- Type: ${disruptionResults.disruptionType}
+- Location: ${disruptionResults.disruptionLocation}
+- Affected Buildings: ${disruptionResults.affectedBuildings}/${disruptionResults.totalBuildings}
+- Water Shortage: ${disruptionResults.waterShortage} liters
+- Efficiency Loss: ${disruptionResults.efficiencyLoss}%
+- Recovery Time: ${disruptionResults.estimatedRecoveryTime} hours
+- Cost Impact: ₹${disruptionResults.costImpact}
+
+BASELINE SYSTEM:
+- Total Buildings: ${baseline.buildings.length}
+- Total Water Needed: ${baseline.totalWaterNeeded} liters
+- River Water: ${baseline.riverWaterAmount} liters
+- Groundwater: ${baseline.groundWaterAmount} liters
+
+Please provide:
+1. Immediate emergency response actions
+2. Short-term recovery strategies (next 24-48 hours)
+3. Long-term resilience improvements
+4. Cost-benefit analysis of recovery options
+5. Priority order for affected buildings
+6. Alternative water source recommendations
+
+Format as a professional technical report with clear sections and actionable recommendations.`;
+
+      const response = await fetch('http://localhost:5000/generate-ai-suggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.suggestions;
+      } else {
+        // Fallback suggestions
+        return generateFallbackDisruptionSuggestions(disruptionResults, baseline);
+      }
+    } catch (error) {
+      console.error('Error generating disruption suggestions:', error);
+      return generateFallbackDisruptionSuggestions(disruptionResults, baseline);
+    }
+  };
+
+  const generateFallbackDisruptionSuggestions = (disruptionResults, baseline) => {
+    let suggestions = `🚨 **DISRUPTION ANALYSIS: ${disruptionResults.disruptionType.toUpperCase()}**\n\n`;
+    
+    suggestions += `📊 **Impact Assessment:**\n`;
+    suggestions += `• Affected Buildings: ${disruptionResults.affectedBuildings}/${disruptionResults.totalBuildings} (${((disruptionResults.affectedBuildings/disruptionResults.totalBuildings)*100).toFixed(1)}%)\n`;
+    suggestions += `• Water Shortage: ${disruptionResults.waterShortage} liters\n`;
+    suggestions += `• Efficiency Loss: ${disruptionResults.efficiencyLoss}%\n`;
+    suggestions += `• Recovery Time: ${disruptionResults.estimatedRecoveryTime} hours\n`;
+    suggestions += `• Cost Impact: ₹${disruptionResults.costImpact}\n\n`;
+    
+    suggestions += `🚨 **Immediate Emergency Response:**\n`;
+    suggestions += `• Activate emergency water distribution protocols\n`;
+    suggestions += `• Implement water rationing for non-critical buildings\n`;
+    suggestions += `• Deploy repair teams to affected infrastructure\n`;
+    suggestions += `• Notify all affected buildings and coordinate response\n\n`;
+    
+    suggestions += `⚙️ **Recovery Strategies:**\n`;
+    switch (disruptionResults.disruptionType) {
+      case 'pipe_leak':
+        suggestions += `• Isolate and repair damaged pipe sections\n`;
+        suggestions += `• Activate backup distribution routes\n`;
+        suggestions += `• Prioritize high-priority buildings (hospitals, emergency services)\n`;
+        break;
+      case 'well_dry':
+        suggestions += `• Increase surface water extraction from river\n`;
+        suggestions += `• Implement water conservation measures\n`;
+        suggestions += `• Activate emergency water storage systems\n`;
+        break;
+      case 'river_pollution':
+        suggestions += `• Switch to groundwater sources exclusively\n`;
+        suggestions += `• Implement additional water treatment protocols\n`;
+        suggestions += `• Coordinate with environmental agencies for cleanup\n`;
+        break;
+      case 'pump_failure':
+        suggestions += `• Activate backup pumping stations\n`;
+        suggestions += `• Implement gravity-fed distribution where possible\n`;
+        suggestions += `• Deploy mobile water distribution units\n`;
+        break;
+    }
+    
+    suggestions += `\n💡 **Long-term Resilience:**\n`;
+    suggestions += `• Implement redundant water distribution systems\n`;
+    suggestions += `• Enhance monitoring and early warning systems\n`;
+    suggestions += `• Develop comprehensive emergency response protocols\n`;
+    suggestions += `• Invest in backup water storage infrastructure\n`;
+    
+    return suggestions;
+  };
 
   // --- Refactored layout: simulation canvas, then controls, then ground section ---
   return (
@@ -1147,12 +1697,12 @@ function SimulationPage() {
         `}
       </style>
       {/* Show Water Connections Button */}
-      <button
+        <button
         style={{ position: 'absolute', top: 24, right: 32, zIndex: 30, padding: '14px 32px', fontSize: 18, borderRadius: 12, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, boxShadow: '0 2px 16px #2563eb22', letterSpacing: 1 }}
         onClick={() => setShowWaterConnections(s => !s)}
       >
         {showWaterConnections ? 'Hide Water Connections' : 'Show Water Connections'}
-      </button>
+        </button>
       {/* 3D Simulation Canvas */}
       <div ref={mountRef} style={{ width: '100vw', height: '70vh', background: '#bfefff', position: 'relative' }} />
       {/* Top-left overlay: System Status and Simulation Controls */}
@@ -1287,15 +1837,116 @@ function SimulationPage() {
           {selectedControl === 'Disruptions' && (
             <>
               <div style={{ fontSize: 18, fontWeight: 600, color: '#2563eb', marginBottom: 6, marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <FaBug style={{ color: '#e67e22' }} /> Disruptions
+                <FaBug style={{ color: '#e67e22' }} /> Disruption Simulation
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <button onClick={() => triggerDisruption('pipeLeak')} style={disruptionBtnStyle} title="Simulate a pipe leak"><FaWind style={{ marginRight: 8 }} /> Pipe Leak</button>
-                <button onClick={() => triggerDisruption('wellDry')} style={disruptionBtnStyle} title="Simulate a well drying up"><FaTint style={{ marginRight: 8 }} /> Well Dry</button>
-                <button onClick={() => triggerDisruption('riverPollution')} style={disruptionBtnStyle} title="Simulate river pollution"><FaWater style={{ marginRight: 8 }} /> River Pollution</button>
-                <button onClick={() => triggerDisruption('pumpFailure')} style={disruptionBtnStyle} title="Simulate a pump failure"><FaCog style={{ marginRight: 8 }} /> Pump Failure</button>
-                <button onClick={() => triggerDisruption('reset')} style={{ ...disruptionBtnStyle, background: '#eee', color: '#333', fontWeight: 500 }} title="Reset all disruptions"><FaRedo style={{ marginRight: 8 }} /> Reset Disruptions</button>
+              
+              {/* Disruption Type Selection */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 14, color: '#2563eb', fontWeight: 600, display: 'block', marginBottom: 6 }}>
+                  Disruption Type:
+                </label>
+                <select 
+                  value={disruptionType || ''} 
+                  onChange={(e) => setDisruptionType(e.target.value)}
+                  style={{ 
+                    width: '100%', 
+                    padding: '8px 12px', 
+                    borderRadius: 8, 
+                    border: '1.5px solid #e3f2fd', 
+                    fontSize: 14,
+                    background: 'white'
+                  }}
+                >
+                  <option value="">Select disruption type...</option>
+                  <option value="pipe_leak">Pipe Leak</option>
+                  <option value="well_dry">Well Dry</option>
+                  <option value="river_pollution">River Pollution</option>
+                  <option value="pump_failure">Pump Failure</option>
+                </select>
               </div>
+
+              {/* Disruption Location Selection */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 14, color: '#2563eb', fontWeight: 600, display: 'block', marginBottom: 6 }}>
+                  Location:
+                </label>
+                <select 
+                  value={disruptionLocation || ''} 
+                  onChange={(e) => setDisruptionLocation(e.target.value)}
+                  style={{ 
+                    width: '100%', 
+                    padding: '8px 12px', 
+                    borderRadius: 8, 
+                    border: '1.5px solid #e3f2fd', 
+                    fontSize: 14,
+                    background: 'white'
+                  }}
+                >
+                  <option value="">Select location...</option>
+                  <option value="north_main">North Main Pipe</option>
+                  <option value="south_main">South Main Pipe</option>
+                  <option value="east_main">East Main Pipe</option>
+                  <option value="west_main">West Main Pipe</option>
+                  <option value="central_pump">Central Pump Station</option>
+                  <option value="river_intake">River Intake Point</option>
+                  <option value="groundwater_well">Groundwater Well</option>
+                </select>
+              </div>
+
+              {/* Run Disruption Simulation Button */}
+              <button 
+                onClick={runDisruptionSimulation} 
+                disabled={disruptionActive || !disruptionType || !disruptionLocation || (!baselineSimulationData && buildings.length === 0)}
+                style={{
+                  ...disruptionBtnStyle,
+                  background: !disruptionType || !disruptionLocation || (!baselineSimulationData && buildings.length === 0) ? '#ccc' : '#e67e22',
+                  color: !disruptionType || !disruptionLocation || (!baselineSimulationData && buildings.length === 0) ? '#666' : 'white',
+                  cursor: !disruptionType || !disruptionLocation || (!baselineSimulationData && buildings.length === 0) ? 'not-allowed' : 'pointer'
+                }}
+                title={(!baselineSimulationData && buildings.length === 0) ? "Run comprehensive simulation first" : "Run disruption simulation"}
+              >
+                {disruptionActive ? (
+                  <>
+                    <div style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid #fff', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', marginRight: 8 }}></div>
+                    Running... {disruptionProgress}%
+                  </>
+                ) : (
+                  <>
+                    <FaBug style={{ marginRight: 8 }} />
+                    Run Disruption Simulation
+                  </>
+                )}
+              </button>
+
+              {/* Baseline Warning */}
+              {!baselineSimulationData && (
+                <div style={{ 
+                  marginTop: 8, 
+                  padding: '8px 12px', 
+                  background: '#fff3cd', 
+                  borderRadius: 8, 
+                  border: '1px solid #e67e22',
+                  fontSize: 12,
+                  color: '#e67e22'
+                }}>
+                  ⚠️ Run comprehensive simulation first to establish baseline
+                </div>
+              )}
+              
+              {/* Baseline Available */}
+              {baselineSimulationData && (
+                <div style={{ 
+                  marginTop: 8, 
+                  padding: '8px 12px', 
+                  background: '#e8f5e8', 
+                  borderRadius: 8, 
+                  border: '1px solid #43e97b',
+                  fontSize: 12,
+                  color: '#43e97b'
+                }}>
+                  ✅ Baseline data available ({baselineSimulationData.buildings?.length || 0} buildings)
+                </div>
+              )}
             </>
           )}
           <div style={{ margin: '18px 0 8px 0', fontWeight: 700, color: '#2563eb' }}>Water Fetch Amounts</div>
@@ -1759,12 +2410,12 @@ function SimulationPage() {
               </div>
 
               <div style={{ display: 'flex', gap: '12px' }}>
-                <button
+          <button
                   onClick={() => setShowDeliveryResults(false)}
                   style={{ flex: 1, padding: '12px', fontSize: '16px', borderRadius: '10px', background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                >
+          >
                   Close
-                </button>
+          </button>
                 <button
                   onClick={() => {
                     setShowDeliveryResults(false);
@@ -1775,6 +2426,352 @@ function SimulationPage() {
                   Reset Simulation
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disruption Simulation Controls */}
+      <div style={{ marginBottom: 20, padding: '20px', background: '#fff5f5', borderRadius: '12px', border: '2px solid #fed7d7' }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: '#e53e3e', marginBottom: 15, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 24 }}>🚨</span> Disruption Simulation
+        </div>
+        
+        {disruptionActive ? (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#e53e3e', marginBottom: 10 }}>
+              Simulating {disruptionType}...
+            </div>
+            <div style={{ 
+              width: '100%', 
+              height: '8px', 
+              background: '#fed7d7', 
+              borderRadius: '4px', 
+              overflow: 'hidden',
+              marginBottom: 10
+            }}>
+              <div style={{ 
+                width: `${disruptionProgress}%`, 
+                height: '100%', 
+                background: '#e53e3e',
+                transition: 'width 0.3s ease'
+              }}></div>
+            </div>
+            <div style={{ fontSize: 14, color: '#666' }}>
+              Progress: {disruptionProgress}%
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: 14, color: '#666', marginBottom: 15, lineHeight: 1.5 }}>
+              Simulate different disruption scenarios to test system resilience and optimization strategies.
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: 15 }}>
+              <button
+                style={{ 
+                  ...disruptionBtnStyle, 
+                  background: disruptionType === 'pipeLeak' ? '#e53e3e' : '#f4f8ff',
+                  color: disruptionType === 'pipeLeak' ? '#fff' : '#3399ff'
+                }}
+                onClick={() => runDisruptionSimulation()}
+                disabled={disruptionActive}
+              >
+                🔧 Pipe Leak
+              </button>
+              <button
+                style={{ 
+                  ...disruptionBtnStyle, 
+                  background: disruptionType === 'wellDry' ? '#e53e3e' : '#f4f8ff',
+                  color: disruptionType === 'wellDry' ? '#fff' : '#3399ff'
+                }}
+                onClick={() => runDisruptionSimulation()}
+                disabled={disruptionActive}
+              >
+                💧 Well Dry
+              </button>
+              <button
+                style={{ 
+                  ...disruptionBtnStyle, 
+                  background: disruptionType === 'riverPollution' ? '#e53e3e' : '#f4f8ff',
+                  color: disruptionType === 'riverPollution' ? '#fff' : '#3399ff'
+                }}
+                onClick={() => runDisruptionSimulation()}
+                disabled={disruptionActive}
+              >
+                🌊 River Pollution
+              </button>
+              <button
+                style={{ 
+                  ...disruptionBtnStyle, 
+                  background: disruptionType === 'pumpFailure' ? '#e53e3e' : '#f4f8ff',
+                  color: disruptionType === 'pumpFailure' ? '#fff' : '#3399ff'
+                }}
+                onClick={() => runDisruptionSimulation()}
+                disabled={disruptionActive}
+              >
+                ⚡ Pump Failure
+              </button>
+            </div>
+            
+            <button
+              style={{ 
+                width: '100%', 
+                padding: '10px', 
+                fontSize: 14, 
+                borderRadius: '8px', 
+                background: '#e2e8f0', 
+                color: '#4a5568', 
+                border: 'none', 
+                cursor: 'pointer',
+                fontWeight: 600
+              }}
+              onClick={() => {
+                setDisruptionActive(false);
+                setDisruptionType(null);
+                setDisruptionLocation(null);
+                setShowDisruptionResults(false);
+                setDisruptionResults(null);
+              }}
+            >
+              🔄 Reset Disruption
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Disruption Results Modal */}
+      {showDisruptionResults && disruptionResults && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: '16px',
+            padding: '30px',
+            maxWidth: '900px',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
+          }}>
+            {/* Header */}
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              marginBottom: '25px',
+              borderBottom: '2px solid #e53e3e',
+              paddingBottom: '15px'
+            }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#e53e3e' }}>
+                🚨 Disruption Analysis Results
+              </div>
+              <button
+                onClick={() => setShowDisruptionResults(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: 24,
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Disruption Summary */}
+            <div style={{ marginBottom: '25px', padding: '20px', background: '#fff5f5', borderRadius: '12px' }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#e53e3e', marginBottom: '15px' }}>
+                📊 Disruption Summary
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <strong>Type:</strong> {disruptionResults.disruptionType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </div>
+                <div>
+                  <strong>Location:</strong> {disruptionResults.disruptionLocation.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </div>
+                <div>
+                  <strong>Affected Buildings:</strong> {disruptionResults.affectedBuildings}/{disruptionResults.totalBuildings} ({((disruptionResults.affectedBuildings/disruptionResults.totalBuildings)*100).toFixed(1)}%)
+                </div>
+                <div>
+                  <strong>Water Shortage:</strong> {disruptionResults.waterShortage} liters
+                </div>
+                <div>
+                  <strong>Efficiency Loss:</strong> {disruptionResults.efficiencyLoss}%
+                </div>
+                <div>
+                  <strong>Recovery Time:</strong> {disruptionResults.estimatedRecoveryTime} hours
+                </div>
+                <div>
+                  <strong>Cost Impact:</strong> ₹{disruptionResults.costImpact}
+                </div>
+                <div>
+                  <strong>Timestamp:</strong> {new Date(disruptionResults.timestamp).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            {/* Emergency Measures */}
+            <div style={{ marginBottom: '25px', padding: '20px', background: '#fff5f5', borderRadius: '12px' }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#e53e3e', marginBottom: '15px' }}>
+                🚨 Emergency Measures
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                {disruptionResults.emergencyMeasures.map((measure, index) => (
+                  <div key={index} style={{ 
+                    padding: '8px 12px', 
+                    background: '#fff', 
+                    borderRadius: '6px', 
+                    border: '1px solid #fed7d7',
+                    fontSize: '14px'
+                  }}>
+                    • {measure}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Affected Infrastructure */}
+            <div style={{ marginBottom: '25px', padding: '20px', background: '#fff5f5', borderRadius: '12px' }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#e53e3e', marginBottom: '15px' }}>
+                🔧 Affected Infrastructure
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                {brokenPipes.map((pipe, index) => (
+                  <div key={index} style={{ 
+                    padding: '8px 12px', 
+                    background: '#fff', 
+                    borderRadius: '6px', 
+                    border: '1px solid #fed7d7',
+                    fontSize: '14px',
+                    color: '#e53e3e',
+                    fontWeight: 600
+                  }}>
+                    ⚠️ {pipe.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Optimization Results */}
+            <div style={{ marginBottom: '25px' }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#2563eb', marginBottom: '15px' }}>
+                ⚙️ Disruption Impact Analysis
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                {/* Impact Assessment */}
+                <div style={{ padding: '15px', background: '#f0f8ff', borderRadius: '8px' }}>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: '#2563eb', marginBottom: '10px' }}>
+                    📊 Impact Assessment
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+                    <div><strong>Affected Buildings:</strong> {disruptionResults.affectedBuildings}</div>
+                    <div><strong>Water Shortage:</strong> {disruptionResults.waterShortage} liters</div>
+                    <div><strong>Efficiency Loss:</strong> {disruptionResults.efficiencyLoss}%</div>
+                    <div><strong>Recovery Time:</strong> {disruptionResults.estimatedRecoveryTime} hours</div>
+                  </div>
+                </div>
+
+                {/* Cost Analysis */}
+                <div style={{ padding: '15px', background: '#f0fff4', borderRadius: '8px' }}>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: '#38a169', marginBottom: '10px' }}>
+                    💰 Cost Analysis
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+                    <div><strong>Direct Cost Impact:</strong> ₹{disruptionResults.costImpact}</div>
+                    <div><strong>Infrastructure Damage:</strong> ₹{Math.round(disruptionResults.costImpact * 0.3)}</div>
+                    <div><strong>Emergency Response:</strong> ₹{Math.round(disruptionResults.costImpact * 0.2)}</div>
+                    <div><strong>Total Estimated Cost:</strong> ₹{Math.round(disruptionResults.costImpact * 1.5)}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '15px', padding: '12px', background: '#e6fffa', borderRadius: '8px', border: '1px solid #81e6d9' }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#319795' }}>
+                  🎯 Priority Actions: Immediate response required for {disruptionResults.affectedBuildings} affected buildings
+                </div>
+              </div>
+            </div>
+
+            {/* AI Suggestions */}
+            <div style={{ marginBottom: '25px' }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: '#805ad5', marginBottom: '15px' }}>
+                🤖 AI Recommendations
+              </div>
+              <div style={{ 
+                padding: '15px', 
+                background: '#faf5ff', 
+                borderRadius: '8px', 
+                border: '1px solid #d6bcfa',
+                whiteSpace: 'pre-line',
+                fontSize: '14px',
+                lineHeight: '1.6',
+                maxHeight: '300px',
+                overflow: 'auto'
+              }}>
+                {optimizationSuggestions || 'AI recommendations will appear here...'}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowDisruptionResults(false)}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  borderRadius: '8px',
+                  background: '#e2e8f0',
+                  color: '#4a5568',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  // Export results
+                  const resultsData = {
+                    disruption: disruptionResults,
+                    timestamp: new Date().toISOString(),
+                    optimization_suggestions: optimizationSuggestions
+                  };
+                  const dataStr = JSON.stringify(resultsData, null, 2);
+                  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                  const url = URL.createObjectURL(dataBlob);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = `disruption_analysis_${disruptionResults.disruptionType}_${new Date().toISOString().split('T')[0]}.json`;
+                  link.click();
+                }}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  borderRadius: '8px',
+                  background: '#2563eb',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                📥 Export Results
+              </button>
             </div>
           </div>
         </div>
@@ -1827,6 +2824,9 @@ function MainApp() {
   const [groundWaterAmount, setGroundWaterAmount] = useState(1000);
 
   // TODO: Add fallback building data here
+
+  // Building instances array for disruption effects
+  const buildingInstances = useRef([]);
 
   // Fallback building data (160 buildings)
   const fallbackBuildingData = Array.from({ length: 160 }, (_, i) => ({
