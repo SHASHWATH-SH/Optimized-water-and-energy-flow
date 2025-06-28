@@ -43,10 +43,10 @@ const Loader = () => {
         minHeight: '100vh',
       }}
     >
-      <Fade in timeout={600} key={iconIdx}>
+      <Fade in timeout={600} key={`icon-${iconIdx}`}>
         <Box>{icons[iconIdx]}</Box>
       </Fade>
-      <Fade in timeout={600} key={msgIdx}>
+      <Fade in timeout={600} key={`msg-${msgIdx}`}>
         <Typography variant="h5" sx={{ color: '#3399ff', fontWeight: 700, mt: 2, mb: 2, letterSpacing: 1 }}>
           {messages[msgIdx]}
         </Typography>

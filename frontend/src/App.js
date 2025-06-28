@@ -7,6 +7,9 @@ import Loader from './components/Loader';
 import Navbar from './components/Navbar';
 import Home from './components/Home';
 import Models from './components/Models';
+import Login from './components/Login';
+import AdminDashboard from './components/AdminDashboard';
+import BuildingDashboard from './components/BuildingDashboard';
 
 function createCylinder(start, end, radius, color, opacity = 1, metalness = 0.5, roughness = 0.3) {
   const direction = new THREE.Vector3().subVectors(end, start);
@@ -72,6 +75,28 @@ function SimulationPage() {
   const [riverWaterAmount, setRiverWaterAmount] = useState(1000);
   const [groundWaterAmount, setGroundWaterAmount] = useState(1000);
 
+  // Building data state
+  const [buildings, setBuildings] = useState([]);
+  const [showBuildingDetails, setShowBuildingDetails] = useState(false);
+  const [clickedBuilding, setClickedBuilding] = useState(null);
+  
+  // Backend data state
+  const [waterRequests, setWaterRequests] = useState([]);
+  const [approvedRequests, setApprovedRequests] = useState([]);
+  const [buildingAllocations, setBuildingAllocations] = useState({});
+  const [dailyDistribution, setDailyDistribution] = useState({});
+  const [simulationResults, setSimulationResults] = useState({});
+  const [isDeliveryRunning, setIsDeliveryRunning] = useState(false);
+  const [deliveryProgress, setDeliveryProgress] = useState(0);
+  const [showDeliveryResults, setShowDeliveryResults] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState('');
+  const [isLoadingAi, setIsLoadingAi] = useState(false);
+  const [totalWaterNeeded, setTotalWaterNeeded] = useState(0);
+  const [extraWaterRequests, setExtraWaterRequests] = useState([]);
+  const [eventWaterRequests, setEventWaterRequests] = useState([]);
+
+  // TODO: Add fallback building data here
+
   // Instanced mesh references
   let dropletInstancedMesh = null;
   let trailInstancedMesh = null;
@@ -83,6 +108,317 @@ function SimulationPage() {
       return { ...d, [type]: !d[type] };
     });
   }
+
+  // Fetch building data from backend
+  const fetchBuildingData = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.log('No token found, using fallback data');
+        setBuildings(fallbackBuildingData);
+        return;
+      }
+
+      console.log('Fetching building data from backend...');
+      const response = await fetch('http://localhost:5000/api/buildings', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Building data fetched successfully:', data.length, 'buildings');
+        setBuildings(data);
+      } else {
+        console.log('Failed to fetch building data, using fallback');
+        setBuildings(fallbackBuildingData);
+      }
+    } catch (error) {
+      console.error('Error fetching building data:', error);
+      console.log('Using fallback building data');
+      setBuildings(fallbackBuildingData);
+    }
+  };
+
+  // Fetch water requests from backend
+  const fetchWaterRequests = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.log('No token available for fetching water requests');
+        return;
+      }
+
+      const response = await fetch('http://localhost:5000/api/water-requests', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Fetched water requests:', data.requests?.length || 0, 'requests');
+        setWaterRequests(data.requests || []);
+        
+        // Separate approved requests
+        const approved = data.requests?.filter(req => req.status === 'approved') || [];
+        setApprovedRequests(approved);
+        
+        // Separate extra water requests
+        const extraRequests = data.requests?.filter(req => req.request_type === 'extra_water' && req.status === 'approved') || [];
+        setExtraWaterRequests(extraRequests);
+        
+        // Separate event requests
+        const eventRequests = data.requests?.filter(req => req.request_type === 'event' && req.status === 'approved') || [];
+        setEventWaterRequests(eventRequests);
+        
+        console.log('Approved requests:', approved.length);
+        console.log('Extra water requests:', extraRequests.length);
+        console.log('Event requests:', eventRequests.length);
+      } else {
+        console.error('Failed to fetch water requests:', response.status);
+        setWaterRequests([]);
+        setApprovedRequests([]);
+        setExtraWaterRequests([]);
+        setEventWaterRequests([]);
+      }
+    } catch (error) {
+      console.error('Error fetching water requests:', error);
+      setWaterRequests([]);
+      setApprovedRequests([]);
+      setExtraWaterRequests([]);
+      setEventWaterRequests([]);
+    }
+  };
+
+  // Fetch daily distribution data
+  const fetchDailyDistribution = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      
+      const today = new Date().toISOString().split('T')[0];
+      const response = await fetch(`http://localhost:5000/api/daily-distribution/${today}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDailyDistribution(data.distribution || {});
+      }
+    } catch (error) {
+      console.error('Error fetching daily distribution:', error);
+    }
+  };
+
+  // Initialize data when component mounts
+  useEffect(() => {
+    console.log('SimulationPage: Initializing data...');
+    fetchBuildingData();
+    fetchWaterRequests();
+    fetchDailyDistribution();
+  }, []);
+
+  // Calculate total water needed when buildings change
+  useEffect(() => {
+    const totalNeeded = buildings.reduce((sum, building) => sum + (building.water_requirement || 0), 0);
+    setTotalWaterNeeded(totalNeeded);
+    console.log('Total water needed updated:', totalNeeded, 'for', buildings.length, 'buildings');
+  }, [buildings]);
+
+  // Start comprehensive simulation
+  const startComprehensiveSimulation = async () => {
+    if (isDeliveryRunning) return;
+    
+    console.log('=== Starting Comprehensive Simulation ===');
+    console.log('Current state:', {
+      buildingsCount: buildings.length,
+      totalWaterNeeded,
+      isLoggedIn: !!localStorage.getItem('token'),
+      approvedRequests: approvedRequests.length,
+      extraWaterRequests: extraWaterRequests.length,
+      eventWaterRequests: eventWaterRequests.length
+    });
+    
+    // Check if we have building data
+    if (buildings.length === 0) {
+      console.log('Building data not loaded, attempting to fetch...');
+      await fetchBuildingData();
+      await fetchWaterRequests();
+      await fetchDailyDistribution();
+      
+      // Check again after fetching
+      if (buildings.length === 0) {
+        alert('Unable to load building data. Please ensure you are logged in and the simulation has been started from the admin dashboard.');
+        return;
+      }
+    }
+    
+    setIsDeliveryRunning(true);
+    setDeliveryProgress(0);
+    
+    try {
+      // Get authentication token from localStorage
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Please login first to run the comprehensive simulation');
+        setIsDeliveryRunning(false);
+        return;
+      }
+
+      console.log('Starting comprehensive simulation with:', {
+        buildings: buildings.length,
+        totalWaterNeeded,
+        approvedRequests: approvedRequests.length,
+        extraWaterRequests: extraWaterRequests.length,
+        eventWaterRequests: eventWaterRequests.length
+      });
+
+      // Step 1: Try to start simulation (may fail if already exists)
+      let startResponse;
+      try {
+        startResponse = await fetch('http://localhost:5000/api/simulation/start', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            river_water_amount: riverWaterAmount,
+            ground_water_amount: groundWaterAmount,
+            total_water_needed: totalWaterNeeded,
+            approved_requests: approvedRequests,
+            extra_water_requests: extraWaterRequests,
+            event_water_requests: eventWaterRequests
+          })
+        });
+      } catch (error) {
+        console.log('Simulation start failed, continuing with run...');
+      }
+
+      // If start failed (simulation already exists), that's okay - continue to run
+      setDeliveryProgress(30);
+      
+      // Step 2: Run simulation with all data
+      const runResponse = await fetch('http://localhost:5000/api/simulation/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          disruptions: disruptions,
+          river_water_amount: riverWaterAmount,
+          ground_water_amount: groundWaterAmount,
+          buildings: buildings,
+          approved_requests: approvedRequests,
+          extra_water_requests: extraWaterRequests,
+          event_water_requests: eventWaterRequests,
+          total_water_needed: totalWaterNeeded
+        })
+      });
+
+      if (runResponse.ok) {
+        setDeliveryProgress(70);
+        const simulationData = await runResponse.json();
+        console.log('Simulation results:', simulationData);
+        setSimulationResults(simulationData.results || {});
+        setBuildingAllocations(simulationData.building_allocations || {});
+        
+        // Get AI suggestions
+        await getAiSuggestions(simulationData.results);
+        setDeliveryProgress(100);
+        setShowDeliveryResults(true);
+      } else {
+        const errorData = await runResponse.json();
+        alert(`Simulation failed: ${errorData.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error running comprehensive simulation:', error);
+      alert('Error running simulation. Please try again.');
+    } finally {
+      setIsDeliveryRunning(false);
+    }
+  };
+
+  // Get AI suggestions
+  const getAiSuggestions = async (results) => {
+    setIsLoadingAi(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/ai-suggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          delivery_data: results,
+          disruptions: disruptions,
+          buildings: buildings,
+          approved_requests: approvedRequests,
+          extra_water_requests: extraWaterRequests,
+          event_water_requests: eventWaterRequests,
+          total_water_needed: totalWaterNeeded
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAiSuggestions(data.suggestions);
+      } else {
+        // Fallback suggestions
+        setAiSuggestions(generateFallbackSuggestions(results));
+      }
+    } catch (error) {
+      console.error('Error getting AI suggestions:', error);
+      setAiSuggestions(generateFallbackSuggestions(results));
+    } finally {
+      setIsLoadingAi(false);
+    }
+  };
+
+  // Generate fallback AI suggestions
+  const generateFallbackSuggestions = (results) => {
+    const suggestions = [];
+    
+    // Water efficiency analysis
+    const efficiency = results.efficiency_percentage || 0;
+    if (efficiency < 80) {
+      suggestions.push(`⚠️ **Low Efficiency Alert**: System efficiency at ${efficiency}%. Consider optimizing water distribution.`);
+    } else {
+      suggestions.push(`✅ **Good Efficiency**: System running at ${efficiency}% efficiency.`);
+    }
+    
+    // Extra water requests analysis
+    if (extraWaterRequests.length > 0) {
+      const totalExtra = extraWaterRequests.reduce((sum, req) => sum + req.water_amount, 0);
+      suggestions.push(`📈 **Extra Water Requests**: ${extraWaterRequests.length} approved requests for ${totalExtra} additional units.`);
+    }
+    
+    // Event analysis
+    if (eventWaterRequests.length > 0) {
+      suggestions.push(`🎉 **Special Events**: ${eventWaterRequests.length} events requiring additional water supply.`);
+    }
+    
+    // Building requirements analysis
+    const unmetBuildings = buildings.filter(building => {
+      const allocation = results.building_allocations?.[building.id];
+      return allocation && allocation.total_water < building.water_requirement;
+    });
+    
+    if (unmetBuildings.length > 0) {
+      suggestions.push(`⚠️ **Water Shortage**: ${unmetBuildings.length} buildings have unmet water requirements.`);
+    }
+    
+    return suggestions.join('\n\n');
+  };
+
+  // Function to handle building click
+  const handleBuildingClick = (building, position) => {
+    setClickedBuilding({ ...building, position });
+    setShowBuildingDetails(true);
+  };
 
   useEffect(() => {
     let animationId;
@@ -140,6 +476,33 @@ function SimulationPage() {
     controls.minDistance = 200;
     controls.maxDistance = 6000;
     controls.maxPolarAngle = Math.PI / 2.05;
+
+    // Mouse interaction for building clicks
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    function onMouseClick(event) {
+      // Calculate mouse position in normalized device coordinates
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      // Update the picking ray with the camera and mouse position
+      raycaster.setFromCamera(mouse, camera);
+
+      // Calculate objects intersecting the picking ray
+      const intersects = raycaster.intersectObjects(scene.children, true);
+
+      for (let i = 0; i < intersects.length; i++) {
+        const object = intersects[i].object;
+        if (object.userData && object.userData.onClick) {
+          object.userData.onClick();
+          break;
+        }
+      }
+    }
+
+    // Add click event listener
+    renderer.domElement.addEventListener('click', onMouseClick);
 
     // Lighting
     // Sun (directional light) with soft shadows
@@ -306,6 +669,21 @@ function SimulationPage() {
     let riverBuildings = 0;
     let groundBuildings = 0;
     const buildingWaterSources = []; // Array to store water source for each building
+    
+    // Use actual building data from backend, fallback to 160 buildings if no data
+    const actualBuildings = buildings.length > 0 ? buildings : Array.from({length: 160}, (_, i) => ({
+      id: i + 1,
+      building_name: `Building ${i + 1}`,
+      building_code: `BLD${(i + 1).toString().padStart(3, '0')}`,
+      water_requirement: 50 + (i % 30),
+      preferred_source: i % 3 === 0 ? 'both' : (i % 2 === 0 ? 'river' : 'ground'),
+      river_water_ratio: i % 3 === 0 ? 60 : (i % 2 === 0 ? 100 : 0),
+      ground_water_ratio: i % 3 === 0 ? 40 : (i % 2 === 0 ? 0 : 100),
+      apartments: 10 + (i % 20),
+      priority: 1 + (i % 3)
+    }));
+    
+    let buildingIndex = 0;
     for (let row = 0; row < gridRows; row++) {
       for (let col = 0; col < gridCols; col++) {
         const pos = new THREE.Vector3(startX + col * spacing, 12, startZ + row * spacing);
@@ -316,26 +694,30 @@ function SimulationPage() {
         ) continue;
         
         // Determine water source based on building position
-        // Buildings closer to the river (left side) use river water
-        // Buildings further from the river (right side) use groundwater
-        const riverThreshold = startX + (gridCols / 2) * spacing; // Middle of the grid
-        const usesRiver = pos.x < riverThreshold;
-        
-        if (usesRiver) {
-          riverBuildings++;
-          buildingWaterSources.push('river');
-        } else {
-          groundBuildings++;
-          buildingWaterSources.push('ground');
-        }
+        // All buildings now have both river and groundwater connections
+        riverBuildings++;
+        groundBuildings++;
+        buildingWaterSources.push('both');
         
         buildingPositions.push(pos);
+        
+        // Get building data
+        const building = actualBuildings[buildingIndex] || {
+          id: buildingIndex + 1,
+          building_name: `Building ${buildingIndex + 1}`,
+          building_code: `BLD${(buildingIndex + 1).toString().padStart(3, '0')}`,
+          water_requirement: 50 + (buildingIndex % 30),
+          apartments: 10 + (buildingIndex % 20),
+          priority: 1 + (buildingIndex % 3)
+        };
+        
         // --- Realistic Building ---
         // Vary shape and roof style
         const width = (18 + Math.random() * 8) * scaleUp * buildingScale;
         const depth = (18 + Math.random() * 8) * scaleUp * buildingScale;
         const height = (28 + Math.random() * 48) * scaleUp * buildingScale;
         const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
+        
         // PBR wall material
         const wallMat = new THREE.MeshPhysicalMaterial({
           color,
@@ -346,6 +728,7 @@ function SimulationPage() {
           reflectivity: 0.18,
           transmission: 0.01
         });
+        
         // Main building block
         const bldg = new THREE.Mesh(
           new THREE.BoxGeometry(width, height, depth),
@@ -354,7 +737,11 @@ function SimulationPage() {
         bldg.position.copy(pos).setY(height / 2 + 1);
         bldg.castShadow = true;
         bldg.receiveShadow = true;
+        bldg.userData = { building, buildingIndex: buildingIndex + 1 };
+        bldg.userData.onClick = () => handleBuildingClick(building, pos);
         scene.add(bldg);
+        
+        // Add building details (windows, doors, etc.)
         // Base steps
         if (Math.random() < 0.5) {
           const steps = new THREE.Mesh(
@@ -364,146 +751,65 @@ function SimulationPage() {
           steps.position.copy(pos).setY(2 * scaleUp);
           scene.add(steps);
         }
+        
         // Main door with frame
         const doorW = 4 * scaleUp * buildingScale, doorH = 8 * scaleUp * buildingScale;
         const door = new THREE.Mesh(
           new THREE.BoxGeometry(doorW, doorH, 1.5 * scaleUp * buildingScale),
-          new THREE.MeshPhysicalMaterial({ color: 0x654321, roughness: 0.5, metalness: 0.2, clearcoat: 0.2 })
+          new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.6 })
         );
-        door.position.copy(pos).add(new THREE.Vector3(0, -height / 2 + doorH / 2, depth / 2 + 0.8 * scaleUp * buildingScale));
+        door.position.copy(pos).setY(doorH / 2 + 2 * scaleUp);
         scene.add(door);
-        // Door frame
-        const doorFrame = new THREE.Mesh(
-          new THREE.BoxGeometry(doorW + 1.2 * scaleUp, doorH + 1.2 * scaleUp, 0.5 * scaleUp * buildingScale),
-          new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.4 })
-        );
-        doorFrame.position.copy(door.position).add(new THREE.Vector3(0, 0, 0.7 * scaleUp * buildingScale));
-        scene.add(doorFrame);
-        // Windows (3-5 rows x 3-5 columns, random pattern)
-        const winRows = 3 + Math.floor(Math.random() * 3);
-        const winCols = 3 + Math.floor(Math.random() * 3);
-        for (let wy = 0; wy < winRows; wy++) {
-          for (let wx = -Math.floor(winCols / 2); wx <= Math.floor(winCols / 2); wx++) {
-            // Window frame
-            const frame = new THREE.Mesh(
-              new THREE.BoxGeometry(3.2 * scaleUp * buildingScale, 4.2 * scaleUp * buildingScale, 0.5 * scaleUp * buildingScale),
-              new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3 })
-            );
-            frame.position.copy(pos).add(new THREE.Vector3(wx * 6 * scaleUp * buildingScale, 10 * scaleUp * buildingScale + wy * 7 * scaleUp * buildingScale, depth / 2 + 1.1 * scaleUp * buildingScale));
-            scene.add(frame);
-            // Window glass (glow at night)
-            const glass = new THREE.Mesh(
-              new THREE.BoxGeometry(2.2 * scaleUp * buildingScale, 3.2 * scaleUp * buildingScale, 0.7 * scaleUp * buildingScale),
-              new THREE.MeshPhysicalMaterial({
-                color: 0x87ceeb,
-                metalness: 0.25,
-                roughness: 0.12,
-                transmission: 0.7,
-                opacity: 0.92,
-                transparent: true,
-                emissive: Math.random() < 0.5 ? 0x222244 : 0xf7e97c,
-                emissiveIntensity: Math.random() < 0.5 ? 0.18 : 0.45
-              })
-            );
-            glass.position.copy(frame.position).add(new THREE.Vector3(0, 0, 0.2 * scaleUp * buildingScale));
-            scene.add(glass);
-          }
-        }
-        // Rooftop details
-        if (Math.random() < 0.5) {
-          // Water tank
-          const tank = new THREE.Mesh(
-            new THREE.CylinderGeometry(2.2 * scaleUp * buildingScale, 2.2 * scaleUp * buildingScale, 4.5 * scaleUp * buildingScale, 18),
-            new THREE.MeshPhysicalMaterial({ color: 0xcccccc, roughness: 0.3, metalness: 0.7 })
+        
+        // Windows (random placement)
+        for (let w = 0; w < 3 + Math.floor(Math.random() * 4); w++) {
+          const windowW = 3 * scaleUp * buildingScale, windowH = 4 * scaleUp * buildingScale;
+          const window = new THREE.Mesh(
+            new THREE.BoxGeometry(windowW, windowH, 0.5 * scaleUp * buildingScale),
+            new THREE.MeshStandardMaterial({ color: 0x87ceeb, roughness: 0.1, metalness: 0.8, transparent: true, opacity: 0.7 })
           );
-          tank.position.copy(pos).setY(height + 4.5 * scaleUp * buildingScale);
-          scene.add(tank);
+          const windowX = pos.x + (Math.random() - 0.5) * (width * 0.6);
+          const windowY = pos.y + 8 * scaleUp * buildingScale + Math.random() * (height - 16 * scaleUp * buildingScale);
+          const windowZ = pos.z + (Math.random() > 0.5 ? 1 : -1) * (depth / 2 + 0.5 * scaleUp * buildingScale);
+          window.position.set(windowX, windowY, windowZ);
+          scene.add(window);
         }
+        
+        // Roof (varied styles)
         if (Math.random() < 0.3) {
-          // Solar panel
-          const panel = new THREE.Mesh(
-            new THREE.BoxGeometry(7 * scaleUp * buildingScale, 0.6 * scaleUp * buildingScale, 4.5 * scaleUp * buildingScale),
-            new THREE.MeshPhysicalMaterial({ color: 0x2222aa, roughness: 0.22, metalness: 0.85, clearcoat: 0.5 })
-          );
-          panel.position.copy(pos).setY(height + 2.8 * scaleUp * buildingScale);
-          panel.rotation.x = -Math.PI / 8;
-          scene.add(panel);
-        }
-        if (Math.random() < 0.25) {
-          // AC unit
-          const ac = new THREE.Mesh(
-            new THREE.BoxGeometry(2.2 * scaleUp * buildingScale, 1.4 * scaleUp * buildingScale, 1.4 * scaleUp * buildingScale),
-            new THREE.MeshPhysicalMaterial({ color: 0xe0e0e0, roughness: 0.6, metalness: 0.3 })
-          );
-          ac.position.copy(pos).setY(height + 2.2 * scaleUp * buildingScale).add(new THREE.Vector3(3.5 * scaleUp * buildingScale, 0, 0));
-          scene.add(ac);
-        }
-        if (Math.random() < 0.18) {
-          // Rooftop railing
-          const rail = new THREE.Mesh(
-            new THREE.BoxGeometry(width - 2.5 * scaleUp * buildingScale, 0.6 * scaleUp * buildingScale, 0.6 * scaleUp * buildingScale),
-            new THREE.MeshStandardMaterial({ color: 0x888888 })
-          );
-          rail.position.copy(pos).setY(height + 3.2 * scaleUp * buildingScale).add(new THREE.Vector3(0, 0, depth / 2 - 0.4 * scaleUp * buildingScale));
-          scene.add(rail);
-        }
-        // Balconies/ledges
-        if (Math.random() < 0.32) {
-          for (let by = 0; by < 2; by++) {
-            const balcony = new THREE.Mesh(
-              new THREE.BoxGeometry(7 * scaleUp * buildingScale, 0.9 * scaleUp * buildingScale, 2.7 * scaleUp * buildingScale),
-              new THREE.MeshPhysicalMaterial({ color: 0xb0b0b0, roughness: 0.5, metalness: 0.2 })
-            );
-            balcony.position.copy(pos).add(new THREE.Vector3(0, 12 * scaleUp * buildingScale + by * 12 * scaleUp * buildingScale, depth / 2 + 1.5 * scaleUp * buildingScale));
-            scene.add(balcony);
-            // Balcony railing
-            const bRail = new THREE.Mesh(
-              new THREE.BoxGeometry(7 * scaleUp * buildingScale, 0.4 * scaleUp * buildingScale, 0.4 * scaleUp * buildingScale),
-              new THREE.MeshStandardMaterial({ color: 0x888888 })
-            );
-            bRail.position.copy(balcony.position).add(new THREE.Vector3(0, 0.6 * scaleUp * buildingScale, 1.2 * scaleUp * buildingScale));
-            scene.add(bRail);
-          }
-        }
-        // Roof style: sometimes add a sloped or gabled roof
-        if (Math.random() < 0.22) {
           const roof = new THREE.Mesh(
-            new THREE.ConeGeometry(width * 0.55, 8 * scaleUp * buildingScale, 4 + Math.floor(Math.random() * 4)),
-            new THREE.MeshPhysicalMaterial({ color: 0x7c4a02, roughness: 0.5, metalness: 0.2 })
+            new THREE.ConeGeometry(width * 0.6, 8 * scaleUp * buildingScale, 8),
+            new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.8 })
           );
           roof.position.copy(pos).setY(height + 4 * scaleUp * buildingScale);
           scene.add(roof);
         }
+        
         // For each building:
         let source, label, waterSupplied;
-        if (usesRiver) {
-          source = 'Kaveri River';
-          waterSupplied = riverBuildings > 0 ? (riverWaterAmount / riverBuildings).toFixed(1) : 0;
-        } else {
-          source = 'Groundwater';
-          waterSupplied = groundBuildings > 0 ? (groundWaterAmount / groundBuildings).toFixed(1) : 0;
-        }
-        // Position label above the building (above the actual building height)
+        // All buildings have both sources
+        source = 'Both Sources';
+        waterSupplied = (riverWaterAmount + groundWaterAmount) / (riverBuildings + groundBuildings);
+        waterSupplied = waterSupplied.toFixed(1);
+        
+        // Create building label with building number and details
         const labelPosition = pos.clone().setY(height + 20 * scaleUp * buildingScale);
-        createLabel(`${waterSupplied} units from ${source}`, labelPosition, scene);
+        const buildingLabel = `${buildingIndex + 1}\n${building.building_name}\n${building.apartments} apts`;
+        createLabel(buildingLabel, labelPosition, scene);
+        
+        buildingIndex++;
       }
     }
     
-    // Connect buildings to water sources
+    // Connect buildings to water sources (both river and groundwater for all buildings)
     buildingPositions.forEach((buildingPos, index) => {
-      const waterSource = buildingWaterSources[index];
-      let sourcePos;
+      // Connect to Kaveri River (left side)
+      const riverSourcePos = new THREE.Vector3(-480 * scaleUp, 2, buildingPos.z);
+      addWaterPipe(riverSourcePos, buildingPos, 'river', 'building');
       
-      if (waterSource === 'river') {
-        // Connect to Kaveri River (left side)
-        sourcePos = new THREE.Vector3(-480 * scaleUp, 2, buildingPos.z);
-      } else {
-        // Connect to Groundwater Source (aquifer)
-        sourcePos = new THREE.Vector3(600 * scaleUp, 2, -600 * scaleUp);
-      }
-      
-      // Connect building to water source
-      addWaterPipe(sourcePos, buildingPos, waterSource, 'building');
+      // Connect to Groundwater Source (right side)
+      const groundSourcePos = new THREE.Vector3(600 * scaleUp, 2, -600 * scaleUp);
+      addWaterPipe(groundSourcePos, buildingPos, 'ground', 'building');
     });
     
     // Park path
@@ -824,12 +1130,22 @@ function SimulationPage() {
       }
       stopSimulation();
       pipesRef.current = [];
+      // Remove click event listener
+      renderer.domElement.removeEventListener('click', onMouseClick);
     };
-  }, [isSimulating, disruptions, showWaterConnections, riverWaterAmount, groundWaterAmount]);
+  }, [isSimulating, disruptions, showWaterConnections, riverWaterAmount, groundWaterAmount, buildings]);
 
   // --- Refactored layout: simulation canvas, then controls, then ground section ---
   return (
     <div style={{ width: '100vw', minHeight: '100vh', background: '#e3f2fd', position: 'relative' }}>
+      <style>
+        {`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}
+      </style>
       {/* Show Water Connections Button */}
       <button
         style={{ position: 'absolute', top: 24, right: 32, zIndex: 30, padding: '14px 32px', fontSize: 18, borderRadius: 12, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, boxShadow: '0 2px 16px #2563eb22', letterSpacing: 1 }}
@@ -871,12 +1187,100 @@ function SimulationPage() {
               <div style={{ fontSize: 20, fontWeight: 700, color: '#2563eb', marginBottom: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
                 <FaTools style={{ color: '#43e97b' }} /> Simulation Controls
               </div>
+              
+              {/* Data Status Indicator */}
+              <div style={{ 
+                marginBottom: 10, 
+                padding: '8px 12px', 
+                borderRadius: '8px', 
+                background: buildings.length > 0 ? '#e8f5e8' : '#fff3cd',
+                border: `1px solid ${buildings.length > 0 ? '#43e97b' : '#e67e22'}`,
+                fontSize: '14px',
+                color: buildings.length > 0 ? '#2e7d32' : '#e67e22',
+                fontWeight: 600
+              }}>
+                📊 Data Status: {buildings.length > 0 ? 
+                  `✅ Loaded (${buildings.length} buildings, ${totalWaterNeeded} units needed)` : 
+                  '⚠️ Not loaded - Click "Refresh Data" or start simulation from admin dashboard'
+                }
+              </div>
+              
+              {/* Help message when no data */}
+              {buildings.length === 0 && (
+                <div style={{ 
+                  marginBottom: 15, 
+                  padding: '12px', 
+                  borderRadius: '8px', 
+                  background: '#e3f2fd',
+                  border: '1px solid #2196f3',
+                  fontSize: '13px',
+                  color: '#1976d2',
+                  lineHeight: '1.4'
+                }}>
+                  <strong>💡 How to get started:</strong><br/>
+                  1. Go to Admin Dashboard<br/>
+                  2. Click "Start Simulation" to load default building data<br/>
+                  3. Return here and click "Refresh Data"<br/>
+                  4. Run the comprehensive simulation with real data
+                </div>
+              )}
               <button
                 style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 10, background: '#43e97b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #43e97b22', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
                 onClick={() => setIsSimulating(s => !s)}
                 title={isSimulating ? 'Stop the water flow simulation' : 'Start the water flow simulation'}
               >
                 {isSimulating ? <FaStop /> : <FaPlay />} {isSimulating ? 'Stop Simulation' : 'Simulate Water Flow'}
+              </button>
+              <button
+                style={{ marginBottom: 10, padding: '12px 0', fontSize: 18, borderRadius: 10, background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #2563eb22', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={startComprehensiveSimulation}
+                disabled={isDeliveryRunning}
+                title="Start comprehensive simulation with backend data"
+              >
+                {isDeliveryRunning ? (
+                  <>
+                    <div style={{ width: '16px', height: '16px', border: '2px solid #fff', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                    Running Simulation...
+                  </>
+                ) : (
+                  <>🚰 Comprehensive Simulation</>
+                )}
+              </button>
+              
+              <button
+                style={{ marginBottom: 10, padding: '12px 0', fontSize: 16, borderRadius: 10, background: '#e67e22', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #e67e2222', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={async () => {
+                  await fetchBuildingData();
+                  await fetchWaterRequests();
+                  await fetchDailyDistribution();
+                  alert(`Data refreshed! Buildings: ${buildings.length}, Total Water Needed: ${totalWaterNeeded} units`);
+                }}
+                title="Refresh data from backend"
+              >
+                🔄 Refresh Data ({buildings.length} buildings)
+              </button>
+              
+              <button
+                style={{ marginBottom: 10, padding: '12px 0', fontSize: 16, borderRadius: 10, background: '#6c757d', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #6c757d22', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={() => setCurrentPage('admin-dashboard')}
+                title="Go back to admin dashboard"
+              >
+                ⬅️ Back to Admin Dashboard
+              </button>
+              
+              <button
+                style={{ marginBottom: 10, padding: '8px 0', fontSize: 14, borderRadius: 8, background: '#17a2b8', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 1px 6px #17a2b822', width: '100%', transition: 'background 0.2s', display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={() => {
+                  console.log('=== Current State Debug ===');
+                  console.log('Buildings:', buildings.length);
+                  console.log('Total Water Needed:', totalWaterNeeded);
+                  console.log('Token:', !!localStorage.getItem('token'));
+                  console.log('Sample Building:', buildings[0]);
+                  alert(`Debug Info:\nBuildings: ${buildings.length}\nTotal Water: ${totalWaterNeeded}\nLogged In: ${!!localStorage.getItem('token')}\nCheck console for details`);
+                }}
+                title="Debug current state"
+              >
+                🔍 Debug State
               </button>
             </>
           )}
@@ -940,6 +1344,441 @@ function SimulationPage() {
         <span>Groundwater Source</span>
         <span style={{ fontSize: 15, color: '#43e97b' }}>OK</span>
       </div>
+
+      {/* Building Details Modal */}
+      {showBuildingDetails && clickedBuilding && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          backdropFilter: 'blur(4px)'
+        }} onClick={() => setShowBuildingDetails(false)}>
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflowY: 'auto'
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '20px 24px 16px',
+              borderBottom: '1px solid #e3f2fd'
+            }}>
+              <h3 style={{ margin: 0, color: '#2563eb', fontSize: '20px', fontWeight: 700 }}>🏢 {clickedBuilding.building_name}</h3>
+              <button style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                color: '#666',
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s'
+              }} onClick={() => setShowBuildingDetails(false)}>×</button>
+            </div>
+            <div style={{ padding: '20px 24px 24px' }}>
+              <div>
+                <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
+                  <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Building Details</h4>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Building Number:</strong> {clickedBuilding.id}</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Code:</strong> {clickedBuilding.building_code}</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Apartments:</strong> {clickedBuilding.apartments}</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Priority Level:</strong> {clickedBuilding.priority}</p>
+                </div>
+                
+                <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
+                  <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Requirements</h4>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Daily Requirement:</strong> {clickedBuilding.water_requirement} units</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Preferred Source:</strong> {clickedBuilding.preferred_source || 'Auto-assigned'}</p>
+                  {clickedBuilding.river_water_ratio !== undefined && (
+                    <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>River Water Ratio:</strong> {clickedBuilding.river_water_ratio}%</p>
+                  )}
+                  {clickedBuilding.ground_water_ratio !== undefined && (
+                    <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Ground Water Ratio:</strong> {clickedBuilding.ground_water_ratio}%</p>
+                  )}
+                </div>
+
+                {/* Water Allocation Details - Show if simulation has been run */}
+                {buildingAllocations[clickedBuilding.id] && (
+                  <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #43e97b' }}>
+                    <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Allocation Details</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px' }}>
+                      <div>
+                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Required:</strong></p>
+                        <p style={{ margin: '6px 0', color: '#2563eb', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].required_water} units</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Delivered:</strong></p>
+                        <p style={{ margin: '6px 0', color: '#43e97b', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].total_water} units</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: '6px 0', color: '#666' }}><strong>River Water:</strong></p>
+                        <p style={{ margin: '6px 0', color: '#3399ff', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].river_water} units</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Groundwater:</strong></p>
+                        <p style={{ margin: '6px 0', color: '#00e6e6', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].ground_water} units</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Extra Water:</strong></p>
+                        <p style={{ margin: '6px 0', color: '#e67e22', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].extra_water} units</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Satisfaction:</strong></p>
+                        <p style={{ 
+                          margin: '6px 0', 
+                          color: buildingAllocations[clickedBuilding.id].satisfaction_percentage >= 100 ? '#43e97b' : 
+                                 buildingAllocations[clickedBuilding.id].satisfaction_percentage >= 80 ? '#e67e22' : '#e74c3c', 
+                          fontWeight: 600 
+                        }}>
+                          {buildingAllocations[clickedBuilding.id].satisfaction_percentage}%
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {/* Shortage or Excess Information */}
+                    {buildingAllocations[clickedBuilding.id].shortage > 0 && (
+                      <div style={{ marginTop: '12px', padding: '8px', background: '#fff3cd', borderRadius: '8px', border: '1px solid #e67e22' }}>
+                        <p style={{ margin: '4px 0', color: '#e67e22', fontWeight: 600, fontSize: '13px' }}>
+                          ⚠️ Water Shortage: {buildingAllocations[clickedBuilding.id].shortage} units
+                        </p>
+                      </div>
+                    )}
+                    
+                    {buildingAllocations[clickedBuilding.id].excess > 0 && (
+                      <div style={{ marginTop: '12px', padding: '8px', background: '#e8f5e8', borderRadius: '8px', border: '1px solid #43e97b' }}>
+                        <p style={{ margin: '4px 0', color: '#43e97b', fontWeight: 600, fontSize: '13px' }}>
+                          ✅ Excess Water: {buildingAllocations[clickedBuilding.id].excess} units (sent to reservoir)
+                        </p>
+                      </div>
+                    )}
+                    
+                    {/* Proportional Distribution Notice */}
+                    {simulationResults.proportional_distribution && (
+                      <div style={{ marginTop: '12px', padding: '8px', background: '#e3f2fd', borderRadius: '8px', border: '1px solid #2563eb' }}>
+                        <p style={{ margin: '4px 0', color: '#2563eb', fontWeight: 600, fontSize: '13px' }}>
+                          📊 Proportional Distribution Applied: {Math.round(simulationResults.distribution_factor * 100)}% of requirement
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
+                  <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Connections</h4>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>🔗 Connected to Kaveri River (Left)</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>🔗 Connected to Groundwater Wells (Right)</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>💧 Dual-source water supply system</p>
+                  <p style={{ margin: '8px 0', color: '#43e97b', lineHeight: 1.5, fontWeight: 600 }}>✅ Both water sources available</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Comprehensive Simulation Results Modal */}
+      {showDeliveryResults && simulationResults && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          backdropFilter: 'blur(4px)'
+        }} onClick={() => setShowDeliveryResults(false)}>
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            maxWidth: '900px',
+            width: '95%',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '20px 24px 16px',
+              borderBottom: '1px solid #e3f2fd'
+            }}>
+              <h3 style={{ margin: 0, color: '#2563eb', fontSize: '24px', fontWeight: 700 }}>🎉 Comprehensive Simulation Results</h3>
+              <button style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                color: '#666',
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s'
+              }} onClick={() => setShowDeliveryResults(false)}>×</button>
+            </div>
+            <div style={{ padding: '20px 24px 24px' }}>
+              
+              {/* System Overview */}
+              <div style={{ marginBottom: '24px', padding: '20px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
+                <h4 style={{ color: '#2563eb', fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0' }}>📊 System Overview</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Total Buildings</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#2563eb' }}>{buildings.length}</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Total Water Needed</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#43e97b' }}>{totalWaterNeeded} units</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Available Water</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#3399ff' }}>{riverWaterAmount + groundWaterAmount} units</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>System Efficiency</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: simulationResults.efficiency_percentage >= 80 ? '#43e97b' : '#e67e22' }}>
+                      {simulationResults.efficiency_percentage || 0}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Water Distribution Summary */}
+              <div style={{ marginBottom: '24px', padding: '20px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #43e97b' }}>
+                <h4 style={{ color: '#2563eb', fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0' }}>💧 Water Distribution Summary</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>River Water Delivered</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#3399ff' }}>{simulationResults.river_water || 0} units</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Groundwater Delivered</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#00e6e6' }}>{simulationResults.ground_water || 0} units</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Total Delivered</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#43e97b' }}>{simulationResults.total_delivered || 0} units</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Average per Building</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#43e97b' }}>
+                      {buildings.length > 0 ? Math.round((simulationResults.total_delivered || 0) / buildings.length) : 0} units
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Water Availability and Reservoir */}
+              <div style={{ marginBottom: '24px', padding: '20px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #e67e22' }}>
+                <h4 style={{ color: '#2563eb', fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0' }}>🌊 Water Availability & Reservoir</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Total Required</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#2563eb' }}>{simulationResults.total_required || 0} units</div>
+                  </div>
+                  <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Total Available</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#3399ff' }}>{simulationResults.total_available || 0} units</div>
+                  </div>
+                  {simulationResults.water_shortage > 0 && (
+                    <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e67e22' }}>
+                      <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Water Shortage</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, color: '#e67e22' }}>{simulationResults.water_shortage || 0} units</div>
+                    </div>
+                  )}
+                  {simulationResults.reservoir_storage > 0 && (
+                    <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #43e97b' }}>
+                      <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Reservoir Storage</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, color: '#43e97b' }}>{simulationResults.reservoir_storage || 0} units</div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Historical Reservoir Data */}
+                {dailyDistribution.previous_day_reservoir > 0 && (
+                  <div style={{ marginTop: '16px', padding: '12px', background: '#f0f8ff', borderRadius: '8px', border: '1px solid #87ceeb' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>📅</span>
+                      <span style={{ fontSize: '16px', fontWeight: 600, color: '#2563eb' }}>Previous Day Reservoir Data</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px' }}>
+                      <div>
+                        <span style={{ color: '#666' }}>Previous Reservoir:</span>
+                        <span style={{ fontWeight: 600, color: '#43e97b', marginLeft: '8px' }}>{dailyDistribution.previous_day_reservoir} units</span>
+                      </div>
+                      <div>
+                        <span style={{ color: '#666' }}>Previous Shortage:</span>
+                        <span style={{ fontWeight: 600, color: '#e67e22', marginLeft: '8px' }}>{dailyDistribution.previous_day_shortage} units</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Proportional Distribution Notice */}
+                {simulationResults.proportional_distribution && (
+                  <div style={{ marginTop: '16px', padding: '12px', background: '#e3f2fd', borderRadius: '8px', border: '1px solid #2563eb' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>📊</span>
+                      <span style={{ fontSize: '16px', fontWeight: 600, color: '#2563eb' }}>Proportional Distribution Applied</span>
+                    </div>
+                    <p style={{ margin: '4px 0', color: '#666', fontSize: '14px' }}>
+                      Due to insufficient water availability, all buildings received {Math.round(simulationResults.distribution_factor * 100)}% of their required water.
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666', fontSize: '14px' }}>
+                      Distribution Factor: {simulationResults.distribution_factor?.toFixed(2) || 0}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Approved Requests Summary */}
+              {(approvedRequests.length > 0 || extraWaterRequests.length > 0 || eventWaterRequests.length > 0) && (
+                <div style={{ marginBottom: '24px', padding: '20px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #e67e22' }}>
+                  <h4 style={{ color: '#2563eb', fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0' }}>📋 Approved Requests Summary</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                    {approvedRequests.length > 0 && (
+                      <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                        <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Total Approved Requests</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#43e97b' }}>{approvedRequests.length}</div>
+                      </div>
+                    )}
+                    {extraWaterRequests.length > 0 && (
+                      <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                        <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Extra Water Requests</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#e67e22' }}>{extraWaterRequests.length}</div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          {extraWaterRequests.reduce((sum, req) => sum + req.water_amount, 0)} additional units
+                        </div>
+                      </div>
+                    )}
+                    {eventWaterRequests.length > 0 && (
+                      <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e3f2fd' }}>
+                        <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>Event Requests</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#ff6b35' }}>{eventWaterRequests.length}</div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          {eventWaterRequests.reduce((sum, req) => sum + req.water_amount, 0)} event units
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Building Allocation Details */}
+              {Object.keys(buildingAllocations).length > 0 && (
+                <div style={{ marginBottom: '24px', padding: '20px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #43e97b' }}>
+                  <h4 style={{ color: '#2563eb', fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0' }}>🏢 Building Allocation Details</h4>
+                  <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
+                      {Object.entries(buildingAllocations).slice(0, 20).map(([buildingId, allocation]) => {
+                        const building = buildings.find(b => b.id == buildingId);
+                        if (!building) return null;
+                        
+                        const requirementMet = allocation.total_water >= building.water_requirement;
+                        const satisfactionPercentage = Math.round((allocation.total_water / building.water_requirement) * 100);
+                        
+                        return (
+                          <div key={buildingId} style={{
+                            background: requirementMet ? '#e8f5e8' : '#fff3cd',
+                            padding: '12px',
+                            borderRadius: '8px',
+                            border: `2px solid ${requirementMet ? '#43e97b' : '#e67e22'}`
+                          }}>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#2563eb', marginBottom: '8px' }}>
+                              {building.building_name} ({building.building_code})
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                              <div>
+                                <span style={{ color: '#666' }}>Required:</span>
+                                <span style={{ fontWeight: 600, color: '#2563eb' }}> {building.water_requirement} units</span>
+                              </div>
+                              <div>
+                                <span style={{ color: '#666' }}>Delivered:</span>
+                                <span style={{ fontWeight: 600, color: '#43e97b' }}> {allocation.total_water} units</span>
+                              </div>
+                              <div>
+                                <span style={{ color: '#666' }}>River:</span>
+                                <span style={{ fontWeight: 600, color: '#3399ff' }}> {allocation.river_water || 0} units</span>
+                              </div>
+                              <div>
+                                <span style={{ color: '#666' }}>Ground:</span>
+                                <span style={{ fontWeight: 600, color: '#00e6e6' }}> {allocation.ground_water || 0} units</span>
+                              </div>
+                            </div>
+                            <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
+                              {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {Object.keys(buildingAllocations).length > 20 && (
+                      <div style={{ marginTop: '12px', textAlign: 'center', color: '#666', fontSize: '14px' }}>
+                        Showing first 20 buildings. Total: {Object.keys(buildingAllocations).length} buildings
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* AI Recommendations */}
+              <div style={{ marginBottom: '24px', padding: '20px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
+                <h4 style={{ color: '#2563eb', fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0' }}>
+                  🤖 AI Recommendations
+                  {isLoadingAi && <span style={{ marginLeft: '10px', fontSize: '14px', color: '#666' }}>Loading...</span>}
+                </h4>
+                <div style={{ background: 'white', padding: '16px', borderRadius: '8px', whiteSpace: 'pre-line', fontSize: '14px', lineHeight: 1.6 }}>
+                  {aiSuggestions || 'AI suggestions will appear here...'}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={() => setShowDeliveryResults(false)}
+                  style={{ flex: 1, padding: '12px', fontSize: '16px', borderRadius: '10px', background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    setShowDeliveryResults(false);
+                    // Reset simulation
+                  }}
+                  style={{ flex: 1, padding: '12px', fontSize: '16px', borderRadius: '10px', background: '#43e97b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Reset Simulation
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -962,18 +1801,116 @@ const disruptionBtnStyle = {
 
 function MainApp() {
   const [loading, setLoading] = useState(true);
+  const [showLogin, setShowLogin] = useState(false);
+  const [currentPage, setCurrentPage] = useState('login');
+  const [user, setUser] = useState(null);
+  const [buildings, setBuildings] = useState([]);
+  const [totalWaterNeeded, setTotalWaterNeeded] = useState(0);
+  const [waterRequests, setWaterRequests] = useState([]);
+  const [approvedRequests, setApprovedRequests] = useState([]);
+  const [extraWaterRequests, setExtraWaterRequests] = useState([]);
+  const [eventWaterRequests, setEventWaterRequests] = useState([]);
+  const [dailyDistribution, setDailyDistribution] = useState(null);
+  const [simulationResults, setSimulationResults] = useState({});
+  const [buildingAllocations, setBuildingAllocations] = useState({});
+  const [aiSuggestions, setAiSuggestions] = useState('');
+  const [showDeliveryResults, setShowDeliveryResults] = useState(false);
+  const [isDeliveryRunning, setIsDeliveryRunning] = useState(false);
+  const [deliveryProgress, setDeliveryProgress] = useState(0);
+  const [disruptions, setDisruptions] = useState({
+    pipeLeak: false,
+    wellDry: false,
+    riverPollution: false,
+    pumpFailure: false
+  });
+  const [riverWaterAmount, setRiverWaterAmount] = useState(1000);
+  const [groundWaterAmount, setGroundWaterAmount] = useState(1000);
+
+  // TODO: Add fallback building data here
+
+  // Fallback building data (160 buildings)
+  const fallbackBuildingData = Array.from({ length: 160 }, (_, i) => ({
+    id: i + 1,
+    building_name: `Building ${i + 1}`,
+    building_code: `BLD${String(i + 1).padStart(3, '0')}`,
+    water_requirement: 50 + (i % 30),
+    preferred_source: 'both',
+    river_water_ratio: 60,
+    ground_water_ratio: 40,
+    apartments: 10 + (i % 20),
+    priority: 1 + (i % 3),
+    is_active: 1
+  }));
+
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 2200); // Loader for 2.2s
+    
+    // Check if user is already logged in
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('user');
+    
+    if (token && userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
+    } else {
+      setShowLogin(true);
+    }
+    
     return () => clearTimeout(timer);
   }, []);
+
+  const handleLogin = (userData) => {
+    setUser(userData);
+    setShowLogin(false);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setUser(null);
+    setShowLogin(true);
+  };
+
   if (loading) return <Loader />;
+
+  // Show login/signup if not authenticated
+  if (showLogin || !user) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  // Show appropriate dashboard based on user type
+  if (user.user_type === 'admin') {
+    return (
+      <Router>
+        <Routes>
+          <Route path="/" element={<AdminDashboard user={user} onLogout={handleLogout} />} />
+          <Route path="/simulation" element={<SimulationPage />} />
+        </Routes>
+      </Router>
+    );
+  } else if (user.user_type === 'building') {
+    return (
+      <Router>
+        <BuildingDashboard user={user} onLogout={handleLogout} />
+      </Router>
+    );
+  }
+
+  // Fallback to main app with navigation
   return (
     <Router>
-      <Navbar />
+      <Navbar user={user} onLogout={handleLogout} />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/simulation" element={<SimulationPage />} />
         <Route path="/models" element={<Models />} />
+        <Route path="/admin" element={<AdminDashboard user={user} onLogout={handleLogout} />} />
+        <Route path="/building" element={<BuildingDashboard user={user} onLogout={handleLogout} />} />
       </Routes>
     </Router>
   );
