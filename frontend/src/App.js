@@ -2077,9 +2077,9 @@ Format as a professional technical report with clear sections and actionable rec
             background: 'white',
             borderRadius: '16px',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-            maxWidth: '500px',
-            width: '90%',
-            maxHeight: '80vh',
+            maxWidth: '600px',
+            width: '95%',
+            maxHeight: '90vh',
             overflowY: 'auto'
           }} onClick={(e) => e.stopPropagation()}>
             <div style={{
@@ -2089,7 +2089,7 @@ Format as a professional technical report with clear sections and actionable rec
               padding: '20px 24px 16px',
               borderBottom: '1px solid #e3f2fd'
             }}>
-              <h3 style={{ margin: 0, color: '#2563eb', fontSize: '20px', fontWeight: 700 }}>🏢 {clickedBuilding.building_name}</h3>
+              <h3 style={{ margin: 0, color: '#2563eb', fontSize: '22px', fontWeight: 700 }}>🏢 Building Details</h3>
               <button style={{
                 background: 'none',
                 border: 'none',
@@ -2107,112 +2107,42 @@ Format as a professional technical report with clear sections and actionable rec
               }} onClick={() => setShowBuildingDetails(false)}>×</button>
             </div>
             <div style={{ padding: '20px 24px 24px' }}>
-              {/* --- NEW: Show people and water supplied summary at the top --- */}
-              <div style={{ marginBottom: '18px', padding: '14px', background: '#e8f5e8', borderRadius: '10px', borderLeft: '5px solid #2563eb' }}>
-                <div style={{ fontSize: '17px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>👥 People in Building: {clickedBuilding.num_people || 0}</div>
-                <div style={{ fontSize: '16px', color: '#43e97b', fontWeight: 600, marginBottom: '2px' }}>💧 Water Supplied: {buildingAllocations[clickedBuilding.id]?.total_water || 0} L/day</div>
-                <div style={{ fontSize: '13px', color: '#888' }}>(Requirement: 175L per person × {clickedBuilding.num_people || 0} people = {clickedBuilding.num_people ? clickedBuilding.num_people * 175 : 0} L/day)</div>
-              </div>
-              <div>
-                <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
-                  <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Building Details</h4>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Building Number:</strong> {clickedBuilding.id}</p>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Code:</strong> {clickedBuilding.building_code}</p>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Apartments:</strong> {clickedBuilding.apartments}</p>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Priority Level:</strong> {clickedBuilding.priority}</p>
-                </div>
-                
-                <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
-                  <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Requirements</h4>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>
-                    <strong>Daily Requirement:</strong> {clickedBuilding.water_requirement} L/day
-                    {clickedBuilding.num_people > 0 && (
-                      <span style={{color:'#888', fontSize:'12px'}}> (175L per person × {clickedBuilding.num_people} people)</span>
-                    )}
-                  </p>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Preferred Source:</strong> {clickedBuilding.preferred_source || 'Auto-assigned'}</p>
-                  {clickedBuilding.river_water_ratio !== undefined && (
-                    <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>River Water Ratio:</strong> {clickedBuilding.river_water_ratio}%</p>
-                  )}
-                  {clickedBuilding.ground_water_ratio !== undefined && (
-                    <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Ground Water Ratio:</strong> {clickedBuilding.ground_water_ratio}%</p>
-                  )}
-                </div>
-
-                {/* Water Allocation Details - Show if simulation has been run */}
-                {buildingAllocations[clickedBuilding.id] && (
-                  <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #43e97b' }}>
-                    <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Allocation Details</h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px' }}>
-                      <div>
-                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Required:</strong></p>
-                        <p style={{ margin: '6px 0', color: '#2563eb', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].required_water} units</p>
-                      </div>
-                      <div>
-                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Delivered:</strong></p>
-                        <p style={{ margin: '6px 0', color: '#43e97b', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].total_water} units</p>
-                      </div>
-                      <div>
-                        <p style={{ margin: '6px 0', color: '#666' }}><strong>River Water:</strong></p>
-                        <p style={{ margin: '6px 0', color: '#3399ff', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].river_water} units</p>
-                      </div>
-                      <div>
-                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Groundwater:</strong></p>
-                        <p style={{ margin: '6px 0', color: '#00e6e6', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].ground_water} units</p>
-                      </div>
-                      <div>
-                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Extra Water:</strong></p>
-                        <p style={{ margin: '6px 0', color: '#e67e22', fontWeight: 600 }}>{buildingAllocations[clickedBuilding.id].extra_water} units</p>
-                      </div>
-                      <div>
-                        <p style={{ margin: '6px 0', color: '#666' }}><strong>Satisfaction:</strong></p>
-                        <p style={{ 
-                          margin: '6px 0', 
-                          color: buildingAllocations[clickedBuilding.id].satisfaction_percentage >= 100 ? '#43e97b' : 
-                                 buildingAllocations[clickedBuilding.id].satisfaction_percentage >= 80 ? '#e67e22' : '#e74c3c', 
-                          fontWeight: 600 
-                        }}>
-                          {buildingAllocations[clickedBuilding.id].satisfaction_percentage}%
-                        </p>
+              {(() => {
+                const houses = housesByBuilding[clickedBuilding.id] || [];
+                if (houses.length === 0) {
+                  return <div style={{ color: '#888', fontSize: '16px', marginBottom: '18px' }}>Loading building data...</div>;
+                }
+                const totalPeople = houses.reduce((sum, h) => sum + (h.num_people || 0), 0);
+                const totalWaterRequirement = houses.reduce((sum, h) => sum + (h.water_requirement || h.num_people * 175), 0);
+                const allocation = buildingAllocations[clickedBuilding.id] || {};
+                const requirementMet = allocation.total_water >= totalWaterRequirement;
+                const satisfactionPercentage = totalWaterRequirement > 0 ? Math.round((allocation.total_water / totalWaterRequirement) * 100) : 0;
+                return (
+                  <div>
+                    {/* --- Summary Section --- */}
+                    <div style={{ marginBottom: '18px', padding: '16px', background: '#e8f5e8', borderRadius: '10px', borderLeft: '5px solid #2563eb' }}>
+                      <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>🏠 Houses in Building: {houses.length}</div>
+                      <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>👥 People in Building: {totalPeople}</div>
+                      <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>💧 Water Required: {totalWaterRequirement} L/day</div>
+                      <div style={{ fontSize: '16px', color: '#43e97b', fontWeight: 700, marginBottom: '6px' }}>🚚 Water Delivered: {allocation.total_water || 0} L/day</div>
+                      <div style={{ fontSize: '15px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
+                        {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
                       </div>
                     </div>
-                    
-                    {/* Shortage or Excess Information */}
-                    {buildingAllocations[clickedBuilding.id].shortage > 0 && (
-                      <div style={{ marginTop: '12px', padding: '8px', background: '#fff3cd', borderRadius: '8px', border: '1px solid #e67e22' }}>
-                        <p style={{ margin: '4px 0', color: '#e67e22', fontWeight: 600, fontSize: '13px' }}>
-                          ⚠️ Water Shortage: {buildingAllocations[clickedBuilding.id].shortage} units
-                        </p>
-                      </div>
-                    )}
-                    
-                    {buildingAllocations[clickedBuilding.id].excess > 0 && (
-                      <div style={{ marginTop: '12px', padding: '8px', background: '#e8f5e8', borderRadius: '8px', border: '1px solid #43e97b' }}>
-                        <p style={{ margin: '4px 0', color: '#43e97b', fontWeight: 600, fontSize: '13px' }}>
-                          ✅ Excess Water: {buildingAllocations[clickedBuilding.id].excess} units (sent to reservoir)
-                        </p>
-                      </div>
-                    )}
-                    
-                    {/* Proportional Distribution Notice */}
-                    {simulationResults.proportional_distribution && (
-                      <div style={{ marginTop: '12px', padding: '8px', background: '#e3f2fd', borderRadius: '8px', border: '1px solid #2563eb' }}>
-                        <p style={{ margin: '4px 0', color: '#2563eb', fontWeight: 600, fontSize: '13px' }}>
-                          📊 Proportional Distribution Applied: {Math.round(simulationResults.distribution_factor * 100)}% of requirement
-                        </p>
-                      </div>
-                    )}
+                    {/* --- End Summary Section --- */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px', marginBottom: '12px' }}>
+                      <div><span style={{ color: '#666' }}>People:</span> <span style={{ fontWeight: 600, color: '#2563eb' }}>{totalPeople}</span></div>
+                      <div><span style={{ color: '#666' }}>Requirement:</span> <span style={{ fontWeight: 600, color: '#2563eb' }}>{totalWaterRequirement} L/day</span></div>
+                      <div><span style={{ color: '#666' }}>Delivered:</span> <span style={{ fontWeight: 600, color: '#43e97b' }}>{allocation.total_water || 0} L/day</span></div>
+                      <div><span style={{ color: '#666' }}>River:</span> <span style={{ fontWeight: 600, color: '#3399ff' }}>{allocation.river_water || 0} L/day</span></div>
+                      <div><span style={{ color: '#666' }}>Ground:</span> <span style={{ fontWeight: 600, color: '#00e6e6' }}>{allocation.ground_water || 0} L/day</span></div>
+                    </div>
+                    <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
+                      {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
+                    </div>
                   </div>
-                )}
-
-                <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
-                  <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Connections</h4>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>🔗 Connected to Kaveri River (Left)</p>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>🔗 Connected to Groundwater Wells (Right)</p>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>💧 Dual-source water supply system</p>
-                  <p style={{ margin: '8px 0', color: '#43e97b', lineHeight: 1.5, fontWeight: 600 }}>✅ Both water sources available</p>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -2423,10 +2353,11 @@ Format as a professional technical report with clear sections and actionable rec
                       {Object.entries(buildingAllocations).slice(0, 20).map(([buildingId, allocation]) => {
                         const building = buildings.find(b => b.id == buildingId);
                         if (!building) return null;
-                        
-                        const requirementMet = allocation.total_water >= building.water_requirement;
-                        const satisfactionPercentage = Math.round((allocation.total_water / building.water_requirement) * 100);
-                        
+                        const houses = housesByBuilding[building.id] || [];
+                        const totalPeople = houses.reduce((sum, h) => sum + (h.num_people || 0), 0);
+                        const totalWaterRequirement = houses.reduce((sum, h) => sum + (h.water_requirement || h.num_people * 175), 0);
+                        const requirementMet = allocation.total_water >= totalWaterRequirement;
+                        const satisfactionPercentage = totalWaterRequirement > 0 ? Math.round((allocation.total_water / totalWaterRequirement) * 100) : 0;
                         return (
                           <div key={buildingId} style={{
                             background: requirementMet ? '#e8f5e8' : '#fff3cd',
@@ -2438,22 +2369,11 @@ Format as a professional technical report with clear sections and actionable rec
                               {building.building_name} ({building.building_code})
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
-                              <div>
-                                <span style={{ color: '#666' }}>Required:</span>
-                                <span style={{ fontWeight: 600, color: '#2563eb' }}> {building.water_requirement} units</span>
-                              </div>
-                              <div>
-                                <span style={{ color: '#666' }}>Delivered:</span>
-                                <span style={{ fontWeight: 600, color: '#43e97b' }}> {allocation.total_water} units</span>
-                              </div>
-                              <div>
-                                <span style={{ color: '#666' }}>River:</span>
-                                <span style={{ fontWeight: 600, color: '#3399ff' }}> {allocation.river_water || 0} units</span>
-                              </div>
-                              <div>
-                                <span style={{ color: '#666' }}>Ground:</span>
-                                <span style={{ fontWeight: 600, color: '#00e6e6' }}> {allocation.ground_water || 0} units</span>
-                              </div>
+                              <div><span style={{ color: '#666' }}>People:</span> <span style={{ fontWeight: 600, color: '#2563eb' }}>{totalPeople}</span></div>
+                              <div><span style={{ color: '#666' }}>Requirement:</span> <span style={{ fontWeight: 600, color: '#2563eb' }}>{totalWaterRequirement} L/day</span></div>
+                              <div><span style={{ color: '#666' }}>Delivered:</span> <span style={{ fontWeight: 600, color: '#43e97b' }}>{allocation.total_water} L/day</span></div>
+                              <div><span style={{ color: '#666' }}>River:</span> <span style={{ fontWeight: 600, color: '#3399ff' }}>{allocation.river_water || 0} L/day</span></div>
+                              <div><span style={{ color: '#666' }}>Ground:</span> <span style={{ fontWeight: 600, color: '#00e6e6' }}>{allocation.ground_water || 0} L/day</span></div>
                             </div>
                             <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
                               {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
