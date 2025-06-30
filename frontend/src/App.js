@@ -2117,10 +2117,12 @@ Format as a professional technical report with clear sections and actionable rec
                 const allocation = buildingAllocations[clickedBuilding.id] || {};
                 const requirementMet = allocation.total_water >= totalWaterRequirement;
                 const satisfactionPercentage = totalWaterRequirement > 0 ? Math.round((allocation.total_water / totalWaterRequirement) * 100) : 0;
+                const buildingNumber = buildings.findIndex(b => b.id === clickedBuilding.id) + 1;
                 return (
                   <div>
                     {/* --- Summary Section --- */}
                     <div style={{ marginBottom: '18px', padding: '16px', background: '#e8f5e8', borderRadius: '10px', borderLeft: '5px solid #2563eb' }}>
+                      <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>🏢 Building Number: {buildingNumber}</div>
                       <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>🏠 Houses in Building: {houses.length}</div>
                       <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>👥 People in Building: {totalPeople}</div>
                       <div style={{ fontSize: '16px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>💧 Water Required: {totalWaterRequirement} L/day</div>
