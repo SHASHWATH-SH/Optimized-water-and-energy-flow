@@ -7,6 +7,7 @@ from datetime import datetime, date
 import hashlib
 import jwt
 from functools import wraps
+import random
 
 app = Flask(__name__)
 CORS(app)
@@ -111,6 +112,35 @@ def init_db():
         )
     ''')
     
+    # Houses table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS houses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            building_id INTEGER NOT NULL,
+            house_number INTEGER NOT NULL,
+            num_people INTEGER NOT NULL,
+            water_requirement INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (building_id) REFERENCES buildings (id),
+            UNIQUE(building_id, house_number)
+        )
+    ''')
+    
+    # House extra water requests table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS house_extra_water_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            house_id INTEGER NOT NULL,
+            building_id INTEGER NOT NULL,
+            extra_water_amount INTEGER NOT NULL,
+            reason TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (house_id) REFERENCES houses (id),
+            FOREIGN KEY (building_id) REFERENCES buildings (id)
+        )
+    ''')
+    
     # Add new columns to existing tables if they don't exist
     try:
         cursor.execute('ALTER TABLE daily_distribution ADD COLUMN reservoir_storage INTEGER DEFAULT 0')
@@ -170,6 +200,19 @@ def init_db():
             10 + (i % 20),  # 10-30 apartments
             1 + (i % 3)  # 1-3 priority
         ))
+        # Insert houses for each building
+        cursor.execute('SELECT id, apartments FROM buildings WHERE building_code = ?', (building_code,))
+        building_row = cursor.fetchone()
+        if building_row:
+            building_id = building_row[0]
+            num_apartments = building_row[1]
+            for house_num in range(1, num_apartments + 1):
+                num_people = random.randint(4, 8)
+                water_requirement = num_people * 175
+                cursor.execute('''
+                    INSERT OR IGNORE INTO houses (building_id, house_number, num_people, water_requirement)
+                    VALUES (?, ?, ?, ?)
+                ''', (building_id, house_num, num_people, water_requirement))
     
     conn.commit()
     conn.close()
@@ -206,6 +249,10 @@ def get_db_connection():
     return conn
 
 # Routes
+@app.route('/')
+def index():
+    return "Backend is running!"
+
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -1194,6 +1241,23 @@ def get_daily_distribution(current_user, date):
             
     except Exception as e:
         return jsonify({'message': f'Error fetching daily distribution: {str(e)}'}), 500
+
+@app.route('/api/buildings/<int:building_id>/houses', methods=['GET'])
+@token_required
+def get_houses_for_building(current_user, building_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT house_number, num_people, water_requirement FROM houses WHERE building_id = ?', (building_id,))
+    houses = [
+        {
+            'house_number': row[0],
+            'num_people': row[1],
+            'water_requirement': row[2]
+        }
+        for row in cursor.fetchall()
+    ]
+    conn.close()
+    return jsonify({'houses': houses})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000) 

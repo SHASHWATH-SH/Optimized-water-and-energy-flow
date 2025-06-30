@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FaBug, FaCog, FaExclamationTriangle, FaPlay, FaRedo, FaStop, FaTint, FaTools, FaWater, FaWind } from 'react-icons/fa';
+import { FaBug, FaExclamationTriangle, FaPlay, FaStop, FaTint, FaTools, FaWater } from 'react-icons/fa';
+import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import Loader from './components/Loader';
-import Navbar from './components/Navbar';
-import Home from './components/Home';
-import Models from './components/Models';
-import Login from './components/Login';
 import AdminDashboard from './components/AdminDashboard';
 import BuildingDashboard from './components/BuildingDashboard';
+import Home from './components/Home';
+import Loader from './components/Loader';
+import Login from './components/Login';
+import Models from './components/Models';
+import Navbar from './components/Navbar';
 
 // Add CSS for spinner animation
 const spinnerStyle = `
@@ -131,6 +131,44 @@ function SimulationPage() {
   // Instanced mesh references
   let dropletInstancedMesh = null;
   let trailInstancedMesh = null;
+
+  const [housesByBuilding, setHousesByBuilding] = useState({});
+
+  // Add fetchHouses function
+  const fetchHouses = async (buildingId) => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    try {
+      const response = await fetch(`http://localhost:5000/api/buildings/${buildingId}/houses`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setHousesByBuilding(prev => ({ ...prev, [buildingId]: data.houses }));
+      }
+    } catch (err) {
+      console.error('Error fetching houses:', err);
+    }
+  };
+
+  // Add useEffect to fetch houses when buildings are loaded
+  useEffect(() => {
+    if (buildings.length > 0) {
+      buildings.forEach(b => {
+        if (!housesByBuilding[b.id]) fetchHouses(b.id);
+      });
+    }
+  }, [buildings]);
+
+  // Add helper function to get updated buildings with house requirements
+  const getUpdatedBuildingsWithHouseRequirements = () => {
+    return buildings.map(b => {
+      const houses = housesByBuilding[b.id] || [];
+      const totalPeople = houses.reduce((sum, h) => sum + (h.num_people || 0), 0);
+      const total = houses.length > 0 ? totalPeople * 175 : b.water_requirement;
+      return { ...b, water_requirement: total, num_people: totalPeople };
+    });
+  };
 
   // Helper to trigger disruptions (update)
   function triggerDisruption(type) {
@@ -256,6 +294,9 @@ function SimulationPage() {
   useEffect(() => {
     const totalNeeded = buildings.reduce((sum, building) => sum + (building.water_requirement || 0), 0);
     setTotalWaterNeeded(totalNeeded);
+    // Automatically set water source amounts based on total needed
+    setRiverWaterAmount(totalNeeded);
+    setGroundWaterAmount(totalNeeded);
     console.log('Total water needed updated:', totalNeeded, 'for', buildings.length, 'buildings');
   }, [buildings]);
 
@@ -264,14 +305,6 @@ function SimulationPage() {
     if (isDeliveryRunning) return;
     
     console.log('=== Starting Comprehensive Simulation ===');
-    console.log('Current state:', {
-      buildingsCount: buildings.length,
-      totalWaterNeeded,
-      isLoggedIn: !!localStorage.getItem('token'),
-      approvedRequests: approvedRequests.length,
-      extraWaterRequests: extraWaterRequests.length,
-      eventWaterRequests: eventWaterRequests.length
-    });
     
     // Check if we have building data
     if (buildings.length === 0) {
@@ -286,12 +319,18 @@ function SimulationPage() {
         return;
       }
     }
+
+    // Make sure we have house data for all buildings
+    const promises = buildings.map(b => {
+      if (!housesByBuilding[b.id]) return fetchHouses(b.id);
+      return Promise.resolve();
+    });
+    await Promise.all(promises);
     
     setIsDeliveryRunning(true);
     setDeliveryProgress(0);
     
     try {
-      // Get authentication token from localStorage
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Please login first to run the comprehensive simulation');
@@ -299,15 +338,30 @@ function SimulationPage() {
         return;
       }
 
-      console.log('Starting comprehensive simulation with:', {
-        buildings: buildings.length,
-        totalWaterNeeded,
+      const updatedBuildings = getUpdatedBuildingsWithHouseRequirements();
+      const totalPeople = updatedBuildings.reduce((sum, b) => sum + (b.num_people || 0), 0);
+      const totalWaterRequired = updatedBuildings.reduce((sum, b) => sum + b.water_requirement, 0);
+      // Allocate total water required to both sources
+      const riverWaterAmount = totalWaterRequired;
+      const groundWaterAmount = totalWaterRequired;
+      
+      console.log('Starting comprehensive simulation with updated buildings:', {
+        buildings: updatedBuildings.length,
+        totalPeople,
+        totalWaterRequired,
+        waterPerPerson: '175L/day',
         approvedRequests: approvedRequests.length,
         extraWaterRequests: extraWaterRequests.length,
         eventWaterRequests: eventWaterRequests.length
       });
 
-      // Step 1: Try to start simulation (may fail if already exists)
+      // Log first few buildings as example
+      console.log('Sample buildings water requirements:');
+      updatedBuildings.slice(0, 5).forEach(b => {
+        console.log(`${b.building_code}: ${b.num_people} people → ${b.water_requirement}L/day`);
+      });
+
+      // Step 1: Try to start simulation
       let startResponse;
       try {
         startResponse = await fetch('http://localhost:5000/api/simulation/start', {
@@ -319,17 +373,17 @@ function SimulationPage() {
           body: JSON.stringify({
             river_water_amount: riverWaterAmount,
             ground_water_amount: groundWaterAmount,
-            total_water_needed: totalWaterNeeded,
+            total_water_needed: totalWaterRequired,
             approved_requests: approvedRequests,
             extra_water_requests: extraWaterRequests,
-            event_water_requests: eventWaterRequests
+            event_water_requests: eventWaterRequests,
+            buildings: updatedBuildings
           })
         });
       } catch (error) {
         console.log('Simulation start failed, continuing with run...');
       }
 
-      // If start failed (simulation already exists), that's okay - continue to run
       setDeliveryProgress(30);
       
       // Step 2: Run simulation with all data
@@ -343,11 +397,11 @@ function SimulationPage() {
           disruptions: disruptions,
           river_water_amount: riverWaterAmount,
           ground_water_amount: groundWaterAmount,
-          buildings: buildings,
+          buildings: updatedBuildings,
           approved_requests: approvedRequests,
           extra_water_requests: extraWaterRequests,
           event_water_requests: eventWaterRequests,
-          total_water_needed: totalWaterNeeded
+          total_water_needed: totalWaterRequired
         })
       });
 
@@ -360,8 +414,8 @@ function SimulationPage() {
         
         // Store baseline data for disruption analysis
         const baselineData = {
-          buildings: buildings,
-          totalWaterNeeded: totalWaterNeeded,
+          buildings: updatedBuildings,
+          totalWaterNeeded: totalWaterRequired,
           buildingAllocations: simulationData.building_allocations || {},
           simulationResults: simulationData.results || {},
           approvedRequests: approvedRequests,
@@ -462,8 +516,14 @@ function SimulationPage() {
   };
 
   // Function to handle building click
-  const handleBuildingClick = (building, position) => {
-    setClickedBuilding({ ...building, position });
+  const handleBuildingClick = async (building, position) => {
+    // If house data for this building is not loaded, fetch it first
+    if (!housesByBuilding[building.id]) {
+      await fetchHouses(building.id);
+    }
+    // After ensuring house data is loaded, get the enriched building
+    const enriched = getUpdatedBuildingsWithHouseRequirements().find(b => b.id === building.id);
+    setClickedBuilding({ ...enriched, position });
     setShowBuildingDetails(true);
   };
 
@@ -1737,7 +1797,21 @@ Format as a professional technical report with clear sections and actionable rec
               <div style={{ fontSize: 20, fontWeight: 700, color: '#2563eb', marginBottom: 8, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
                 <FaTools style={{ color: '#43e97b' }} /> Simulation Controls
               </div>
-              
+
+              {/* Water Sources Section */}
+              {/*
+              <div style={{ margin: '10px 0 10px 0', fontWeight: 700, color: '#2563eb' }}>Water Sources</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                <div style={{ fontSize: 15, color: '#2563eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Kaveri River:</span>
+                  <span style={{ color: '#43e97b', fontWeight: 600 }}>{riverWaterAmount} units</span>
+                </div>
+                <div style={{ fontSize: 15, color: '#2563eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Groundwater:</span>
+                  <span style={{ color: '#43e97b', fontWeight: 600 }}>{groundWaterAmount} units</span>
+                </div>
+              </div>
+              */}
               {/* Data Status Indicator */}
               <div style={{ 
                 marginBottom: 10, 
@@ -1949,29 +2023,17 @@ Format as a professional technical report with clear sections and actionable rec
               )}
             </>
           )}
-          <div style={{ margin: '18px 0 8px 0', fontWeight: 700, color: '#2563eb' }}>Water Fetch Amounts</div>
+          {/* <div style={{ margin: '18px 0 8px 0', fontWeight: 700, color: '#2563eb' }}>Water Sources</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <label style={{ fontSize: 15, color: '#2563eb' }}>
-              Kaveri River (total):
-              <input
-                type="number"
-                min="0"
-                value={riverWaterAmount}
-                onChange={e => setRiverWaterAmount(Number(e.target.value))}
-                style={{ marginLeft: 8, borderRadius: 6, border: '1.5px solid #e3f2fd', padding: '4px 10px', fontSize: 15, width: 100 }}
-              />
-            </label>
-            <label style={{ fontSize: 15, color: '#2563eb' }}>
-              Groundwater (total):
-              <input
-                type="number"
-                min="0"
-                value={groundWaterAmount}
-                onChange={e => setGroundWaterAmount(Number(e.target.value))}
-                style={{ marginLeft: 8, borderRadius: 6, border: '1.5px solid #e3f2fd', padding: '4px 10px', fontSize: 15, width: 100 }}
-              />
-            </label>
-          </div>
+            <div style={{ fontSize: 15, color: '#2563eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Kaveri River:</span>
+              <span style={{ color: '#43e97b', fontWeight: 600 }}>{riverWaterAmount} units</span>
+            </div>
+            <div style={{ fontSize: 15, color: '#2563eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Groundwater:</span>
+              <span style={{ color: '#43e97b', fontWeight: 600 }}>{groundWaterAmount} units</span>
+            </div>
+          </div> */}
         </div>
       </div>
       {/* Side status indicators (left and right) */}
@@ -2045,6 +2107,12 @@ Format as a professional technical report with clear sections and actionable rec
               }} onClick={() => setShowBuildingDetails(false)}>×</button>
             </div>
             <div style={{ padding: '20px 24px 24px' }}>
+              {/* --- NEW: Show people and water supplied summary at the top --- */}
+              <div style={{ marginBottom: '18px', padding: '14px', background: '#e8f5e8', borderRadius: '10px', borderLeft: '5px solid #2563eb' }}>
+                <div style={{ fontSize: '17px', color: '#2563eb', fontWeight: 700, marginBottom: '6px' }}>👥 People in Building: {clickedBuilding.num_people || 0}</div>
+                <div style={{ fontSize: '16px', color: '#43e97b', fontWeight: 600, marginBottom: '2px' }}>💧 Water Supplied: {buildingAllocations[clickedBuilding.id]?.total_water || 0} L/day</div>
+                <div style={{ fontSize: '13px', color: '#888' }}>(Requirement: 175L per person × {clickedBuilding.num_people || 0} people = {clickedBuilding.num_people ? clickedBuilding.num_people * 175 : 0} L/day)</div>
+              </div>
               <div>
                 <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
                   <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Building Details</h4>
@@ -2056,7 +2124,12 @@ Format as a professional technical report with clear sections and actionable rec
                 
                 <div style={{ marginBottom: '20px', padding: '16px', background: '#f8faff', borderRadius: '12px', borderLeft: '4px solid #2563eb' }}>
                   <h4 style={{ color: '#2563eb', fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0' }}>Water Requirements</h4>
-                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Daily Requirement:</strong> {clickedBuilding.water_requirement} units</p>
+                  <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}>
+                    <strong>Daily Requirement:</strong> {clickedBuilding.water_requirement} L/day
+                    {clickedBuilding.num_people > 0 && (
+                      <span style={{color:'#888', fontSize:'12px'}}> (175L per person × {clickedBuilding.num_people} people)</span>
+                    )}
+                  </p>
                   <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>Preferred Source:</strong> {clickedBuilding.preferred_source || 'Auto-assigned'}</p>
                   {clickedBuilding.river_water_ratio !== undefined && (
                     <p style={{ margin: '8px 0', color: '#333', lineHeight: 1.5 }}><strong>River Water Ratio:</strong> {clickedBuilding.river_water_ratio}%</p>
@@ -2829,18 +2902,38 @@ function MainApp() {
   const buildingInstances = useRef([]);
 
   // Fallback building data (160 buildings)
-  const fallbackBuildingData = Array.from({ length: 160 }, (_, i) => ({
-    id: i + 1,
-    building_name: `Building ${i + 1}`,
-    building_code: `BLD${String(i + 1).padStart(3, '0')}`,
-    water_requirement: 50 + (i % 30),
-    preferred_source: 'both',
-    river_water_ratio: 60,
-    ground_water_ratio: 40,
-    apartments: 10 + (i % 20),
-    priority: 1 + (i % 3),
-    is_active: 1
-  }));
+  const fallbackBuildingData = Array.from({ length: 160 }, (_, i) => {
+    const numPeople = 65 + (i % 50); // Base of 65 people, varying up to 115 per building
+    return {
+      id: i + 1,
+      building_name: `Building ${i + 1}`,
+      building_code: `BLD${String(i + 1).padStart(3, '0')}`,
+      water_requirement: numPeople * 175, // 175L per person
+      preferred_source: 'both',
+      river_water_ratio: 60,
+      ground_water_ratio: 40,
+      apartments: 11 + (i % 10), // 11-20 apartments per building
+      priority: 1 + (i % 3),
+      is_active: 1,
+      num_people: numPeople // Store the number of people for reference
+    };
+  });
+
+  const [housesByBuilding, setHousesByBuilding] = useState({});
+
+  // After fetching all houses, update each building's water_requirement
+  const updateBuildingsWithHouseRequirements = (buildings, housesByBuilding) => {
+    return buildings.map(b => {
+      const houses = housesByBuilding[b.id] || [];
+      const totalPeople = houses.reduce((sum, h) => sum + (h.num_people || 0), 0);
+      const total = houses.reduce((sum, h) => sum + (h.water_requirement || h.num_people * 175), 0);
+      return { 
+        ...b, 
+        water_requirement: total || (totalPeople * 175), // Use 175L per person if no specific requirement
+        num_people: totalPeople
+      };
+    });
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 2200); // Loader for 2.2s

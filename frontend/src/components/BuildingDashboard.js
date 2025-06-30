@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { FaWater, FaEdit, FaPlus, FaHistory, FaCheck, FaTimes } from 'react-icons/fa';
+import React, { useEffect, useState } from 'react';
+import { FaCheck, FaEdit, FaHistory, FaPlus, FaTimes } from 'react-icons/fa';
 
 function BuildingDashboard({ user, onLogout }) {
   const [buildings, setBuildings] = useState([]);
@@ -15,6 +15,8 @@ function BuildingDashboard({ user, onLogout }) {
   const [requests, setRequests] = useState([]);
   const [simulationStatus, setSimulationStatus] = useState('not_started');
   const [loading, setLoading] = useState(false);
+  const [housesByBuilding, setHousesByBuilding] = useState({});
+  const [expandedBuilding, setExpandedBuilding] = useState(null);
 
   const token = localStorage.getItem('token');
 
@@ -23,6 +25,15 @@ function BuildingDashboard({ user, onLogout }) {
     fetchRequests();
     fetchSimulationStatus();
   }, []);
+
+  useEffect(() => {
+    if (buildings.length > 0) {
+      buildings.forEach(b => {
+        if (!housesByBuilding[b.id]) fetchHouses(b.id);
+      });
+    }
+    // eslint-disable-next-line
+  }, [buildings]);
 
   const fetchBuildings = async () => {
     try {
@@ -69,6 +80,21 @@ function BuildingDashboard({ user, onLogout }) {
       }
     } catch (error) {
       console.error('Error fetching simulation status:', error);
+    }
+  };
+
+  const fetchHouses = async (buildingId) => {
+    if (!token) return;
+    try {
+      const response = await fetch(`http://localhost:5000/api/buildings/${buildingId}/houses`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setHousesByBuilding(prev => ({ ...prev, [buildingId]: data.houses }));
+      }
+    } catch (err) {
+      // handle error
     }
   };
 
@@ -161,6 +187,13 @@ function BuildingDashboard({ user, onLogout }) {
     }
   };
 
+  const getBuildingTotals = (buildingId) => {
+    const houses = housesByBuilding[buildingId] || [];
+    const totalPeople = houses.reduce((sum, h) => sum + h.num_people, 0);
+    const totalWater = houses.reduce((sum, h) => sum + h.water_requirement, 0);
+    return { totalPeople, totalWater };
+  };
+
   return (
     <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
       <div style={{ marginBottom: '30px' }}>
@@ -235,7 +268,10 @@ function BuildingDashboard({ user, onLogout }) {
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '15px', fontSize: '14px' }}>
                   <div>
-                    <strong>Water Requirement:</strong> {building.water_requirement} units
+                    <strong>Total People:</strong> {housesByBuilding[building.id] ? getBuildingTotals(building.id).totalPeople : '...'}
+                  </div>
+                  <div>
+                    <strong>Total Water Requirement:</strong> {housesByBuilding[building.id] ? getBuildingTotals(building.id).totalWater : '...'} L/day
                   </div>
                   <div>
                     <strong>Apartments:</strong> {building.apartments}
@@ -247,6 +283,28 @@ function BuildingDashboard({ user, onLogout }) {
                     <strong>Priority:</strong> {building.priority}
                   </div>
                 </div>
+
+                <button
+                  style={{ marginBottom: '10px', background: '#e3f2fd', color: '#1976d2', border: 'none', borderRadius: '5px', padding: '5px 10px', cursor: 'pointer' }}
+                  onClick={() => {
+                    setExpandedBuilding(expandedBuilding === building.id ? null : building.id);
+                    if (!housesByBuilding[building.id]) fetchHouses(building.id);
+                  }}
+                >
+                  {expandedBuilding === building.id ? 'Hide Houses' : 'Show Houses'}
+                </button>
+                {expandedBuilding === building.id && housesByBuilding[building.id] && (
+                  <div style={{ background: '#f8f9fa', borderRadius: '8px', padding: '10px', marginBottom: '10px' }}>
+                    <strong>Houses:</strong>
+                    <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                      {housesByBuilding[building.id].map(house => (
+                        <li key={house.house_number}>
+                          House {house.house_number}: {house.num_people} people, {house.water_requirement} L/day
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {simulationStatus === 'started' && (
                   <div style={{ display: 'flex', gap: '10px' }}>
