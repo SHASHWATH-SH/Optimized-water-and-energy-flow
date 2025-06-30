@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { FaPlay, FaStop, FaCheck, FaTimes, FaEye, FaCog, FaChartBar, FaTint, FaExclamationTriangle, FaTools, FaSpinner, FaBug, FaWind, FaWater, FaRedo, FaRocket } from 'react-icons/fa';
+import React, { useEffect, useState } from 'react';
+import { FaCheck, FaEye, FaPlay, FaRedo, FaRocket, FaSpinner, FaTimes } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 
 function AdminDashboard({ user, onLogout }) {
@@ -162,7 +162,8 @@ function AdminDashboard({ user, onLogout }) {
 
       if (response.ok) {
         alert(`Request ${status} successfully!`);
-        fetchRequests();
+        await fetchRequests();
+        await fetchSimulationStatus();
       } else {
         const data = await response.json();
         alert(data.message || 'Failed to update request');

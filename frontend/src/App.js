@@ -227,26 +227,36 @@ function SimulationPage() {
       
       if (response.ok) {
         const data = await response.json();
-        console.log('Fetched water requests:', data.requests?.length || 0, 'requests');
         setWaterRequests(data.requests || []);
-        
         // Separate approved requests
         const approved = data.requests?.filter(req => req.status === 'approved') || [];
         setApprovedRequests(approved);
-        
         // Separate extra water requests
         const extraRequests = data.requests?.filter(req => req.request_type === 'extra_water' && req.status === 'approved') || [];
         setExtraWaterRequests(extraRequests);
-        
         // Separate event requests
         const eventRequests = data.requests?.filter(req => req.request_type === 'event' && req.status === 'approved') || [];
         setEventWaterRequests(eventRequests);
-        
         console.log('Approved requests:', approved.length);
-        console.log('Extra water requests:', extraRequests.length);
-        console.log('Event requests:', eventRequests.length);
+
+        // --- PATCH: Update buildingAllocations for approved extra water requests ---
+        setBuildingAllocations(prev => {
+          if (!prev) return prev;
+          const updated = { ...prev };
+          extraRequests.forEach(req => {
+            const buildingId = req.building_id;
+            if (updated[buildingId]) {
+              updated[buildingId] = {
+                ...updated[buildingId],
+                extra_water: (updated[buildingId].extra_water || 0) + req.water_amount,
+                total_water: (updated[buildingId].total_water || 0) + req.water_amount,
+              };
+            }
+          });
+          return updated;
+        });
+        // --- END PATCH ---
       } else {
-        console.error('Failed to fetch water requests:', response.status);
         setWaterRequests([]);
         setApprovedRequests([]);
         setExtraWaterRequests([]);
@@ -303,34 +313,11 @@ function SimulationPage() {
   // Start comprehensive simulation
   const startComprehensiveSimulation = async () => {
     if (isDeliveryRunning) return;
-    
-    console.log('=== Starting Comprehensive Simulation ===');
-    
-    // Check if we have building data
-    if (buildings.length === 0) {
-      console.log('Building data not loaded, attempting to fetch...');
-      await fetchBuildingData();
-      await fetchWaterRequests();
-      await fetchDailyDistribution();
-      
-      // Check again after fetching
-      if (buildings.length === 0) {
-        alert('Unable to load building data. Please ensure you are logged in and the simulation has been started from the admin dashboard.');
-        return;
-      }
-    }
-
-    // Make sure we have house data for all buildings
-    const promises = buildings.map(b => {
-      if (!housesByBuilding[b.id]) return fetchHouses(b.id);
-      return Promise.resolve();
-    });
-    await Promise.all(promises);
-    
     setIsDeliveryRunning(true);
     setDeliveryProgress(0);
-    
     try {
+      // Always refresh water requests before running simulation
+      await fetchWaterRequests();
       const token = localStorage.getItem('token');
       if (!token) {
         alert('Please login first to run the comprehensive simulation');
@@ -387,6 +374,17 @@ function SimulationPage() {
       setDeliveryProgress(30);
       
       // Step 2: Run simulation with all data
+      console.log('Sending extraWaterRequests to simulation:', extraWaterRequests);
+      console.log('Simulation run payload:', {
+        disruptions: disruptions,
+        river_water_amount: riverWaterAmount,
+        ground_water_amount: groundWaterAmount,
+        buildings: updatedBuildings,
+        approved_requests: approvedRequests,
+        extra_water_requests: extraWaterRequests,
+        event_water_requests: eventWaterRequests,
+        total_water_needed: totalWaterRequired
+      });
       const runResponse = await fetch('http://localhost:5000/api/simulation/run', {
         method: 'POST',
         headers: {
@@ -2130,6 +2128,11 @@ Format as a professional technical report with clear sections and actionable rec
                       <div style={{ fontSize: '15px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
                         {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
                       </div>
+                      {allocation.extra_water > 0 && requirementMet && (
+                        <div style={{ fontSize: '15px', fontWeight: 600, color: '#43e97b', marginTop: '6px' }}>
+                          ✅ Extra water requirement satisfied!
+                        </div>
+                      )}
                     </div>
                     {/* --- End Summary Section --- */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '14px', marginBottom: '12px' }}>
@@ -2142,6 +2145,11 @@ Format as a professional technical report with clear sections and actionable rec
                     <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
                       {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
                     </div>
+                    {allocation.extra_water > 0 && requirementMet && (
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#43e97b', marginTop: '4px' }}>
+                        ✅ Extra water requirement satisfied!
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2374,12 +2382,20 @@ Format as a professional technical report with clear sections and actionable rec
                               <div><span style={{ color: '#666' }}>People:</span> <span style={{ fontWeight: 600, color: '#2563eb' }}>{totalPeople}</span></div>
                               <div><span style={{ color: '#666' }}>Requirement:</span> <span style={{ fontWeight: 600, color: '#2563eb' }}>{totalWaterRequirement} L/day</span></div>
                               <div><span style={{ color: '#666' }}>Delivered:</span> <span style={{ fontWeight: 600, color: '#43e97b' }}>{allocation.total_water} L/day</span></div>
+                              {allocation.extra_water > 0 && (
+                                <div><span style={{ color: '#666' }}>Extra Water:</span> <span style={{ fontWeight: 600, color: '#e67e22' }}>{allocation.extra_water} L/day</span></div>
+                              )}
                               <div><span style={{ color: '#666' }}>River:</span> <span style={{ fontWeight: 600, color: '#3399ff' }}>{allocation.river_water || 0} L/day</span></div>
                               <div><span style={{ color: '#666' }}>Ground:</span> <span style={{ fontWeight: 600, color: '#00e6e6' }}>{allocation.ground_water || 0} L/day</span></div>
                             </div>
                             <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 600, color: requirementMet ? '#43e97b' : '#e67e22' }}>
                               {requirementMet ? '✅' : '❌'} {satisfactionPercentage}% satisfied
                             </div>
+                            {allocation.extra_water > 0 && requirementMet && (
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: '#43e97b', marginTop: '4px' }}>
+                                ✅ Extra water requirement satisfied!
+                              </div>
+                            )}
                           </div>
                         );
                       })}
